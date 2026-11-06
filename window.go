@@ -107,9 +107,12 @@ func (a *application) createWindow() error {
 		return err
 	}
 	a.buttons = []*walk.PushButton{a.copyLogin, copyPassword, add}
-	// walk always creates a visible toolbar. Empty, it reserves no space but is
-	// still stretched across the top of the window, covering the search box.
-	a.mw.ToolBar().SetVisible(false)
+	// walk always creates a toolbar. Empty, it reserves no space but is still
+	// stretched across the top of the window, covering the search box. It has to
+	// be removed: SetVisible(false) is a no-op while the window itself is hidden.
+	toolBar := a.mw.ToolBar()
+	a.mw.SetToolBar(nil)
+	toolBar.Dispose()
 	makePopup(a.mw.Handle())
 
 	if icon := appIcon(); icon != nil {
