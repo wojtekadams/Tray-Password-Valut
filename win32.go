@@ -23,6 +23,8 @@ const (
 	runKeyPath  = `Software\Microsoft\Windows\CurrentVersion\Run`
 	modNoRepeat = 0x4000
 
+	wmHotkeyRequest = win.WM_APP + 1
+
 	wmPowerBroadcast     = 0x0218
 	wmWTSSessionChange   = 0x02B1
 	pbtAPMSuspend        = 0x0004
@@ -35,6 +37,8 @@ const (
 
 var (
 	user32                   = windows.NewLazySystemDLL("user32.dll")
+	procUnregisterHotKey     = user32.NewProc("UnregisterHotKey")
+	procPostThreadMessage    = user32.NewProc("PostThreadMessageW")
 	procRegisterHotKey       = user32.NewProc("RegisterHotKey")
 	procGetMessage           = user32.NewProc("GetMessageW")
 	procRegisterClipboardFmt = user32.NewProc("RegisterClipboardFormatW")
@@ -55,42 +59,84 @@ func acquireSingleInstance() bool {
 	return !errors.Is(err, windows.ERROR_ALREADY_EXISTS)
 }
 
-// listenHotkey registers the first available shortcut and calls onPress for
-// each press. It runs on its own thread because WM_HOTKEY is delivered to the
-// queue of the registering thread. It returns the shortcut that was registered,
-// or "" if none could be.
-func listenHotkey(candidates []string, onPress func()) string {
-	active := make(chan string, 1)
-	go func() {
-		runtime.LockOSThread()
-		registered := ""
-		for _, name := range candidates {
-			h, err := hotkey.Parse(name)
-			if err != nil {
-				continue
-			}
-			ok, _, _ := procRegisterHotKey.Call(0, 1, uintptr(h.Modifiers|modNoRepeat), uintptr(h.Key))
-			if ok != 0 {
-				registered = name
-				break
-			}
-		}
-		active <- registered
-		if registered == "" {
+// hotkeyListener owns the global shortcut. RegisterHotKey ties a shortcut to the
+// calling thread, whose queue then receives WM_HOTKEY, so registering and
+// listening both happen on one dedicated thread.
+type hotkeyListener struct {
+	thread   uint32
+	requests chan hotkeyRequest
+}
+
+type hotkeyRequest struct {
+	key   hotkey.Hotkey
+	reply chan bool
+}
+
+// newHotkeyListener starts the thread. onPress is called on that thread.
+func newHotkeyListener(onPress func()) *hotkeyListener {
+	l := &hotkeyListener{requests: make(chan hotkeyRequest, 1)}
+	ready := make(chan struct{})
+	go l.run(onPress, ready)
+	<-ready
+	return l
+}
+
+// set makes name the shortcut. If it cannot be registered, the previous
+// shortcut stays active.
+func (l *hotkeyListener) set(name string) error {
+	key, err := hotkey.Parse(name)
+	if err != nil {
+		return err
+	}
+	reply := make(chan bool, 1)
+	l.requests <- hotkeyRequest{key, reply}
+	procPostThreadMessage.Call(uintptr(l.thread), wmHotkeyRequest, 0, 0)
+	if !<-reply {
+		return fmt.Errorf("%s is already in use.", name)
+	}
+	return nil
+}
+
+func (l *hotkeyListener) run(onPress func(), ready chan<- struct{}) {
+	runtime.LockOSThread()
+	l.thread = windows.GetCurrentThreadId()
+	var msg win.MSG
+	// A thread has no message queue, and cannot be posted to, until it asks.
+	win.PeekMessage(&msg, 0, 0, 0, win.PM_NOREMOVE)
+	close(ready)
+
+	var current hotkey.Hotkey
+	var id uintptr // 0 until a shortcut is registered, then alternates 1 and 2
+	for {
+		r, _, _ := procGetMessage.Call(uintptr(unsafe.Pointer(&msg)), 0, 0, 0)
+		if int32(r) <= 0 {
 			return
 		}
-		var msg win.MSG
-		for {
-			r, _, _ := procGetMessage.Call(uintptr(unsafe.Pointer(&msg)), 0, 0, 0)
-			if int32(r) <= 0 {
-				return
+		switch msg.Message {
+		case win.WM_HOTKEY:
+			onPress()
+		case wmHotkeyRequest:
+			request := <-l.requests
+			if request.key == current {
+				request.reply <- true
+				continue
 			}
-			if msg.Message == win.WM_HOTKEY {
-				onPress()
+			// The new one first: if it is taken, the old one must survive.
+			next := 3 - id
+			if id == 0 {
+				next = 1
 			}
+			ok, _, _ := procRegisterHotKey.Call(0, next,
+				uintptr(request.key.Modifiers|modNoRepeat), uintptr(request.key.Key))
+			if ok != 0 {
+				if id != 0 {
+					procUnregisterHotKey.Call(0, id)
+				}
+				id, current = next, request.key
+			}
+			request.reply <- ok != 0
 		}
-	}()
-	return <-active
+	}
 }
 
 // setClipboard stores text, marked so that it stays out of Windows clipboard

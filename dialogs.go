@@ -286,6 +286,40 @@ func (a *application) addEntry() {
 	}
 }
 
+// changeHotkey asks for a shortcut. A shortcut that cannot be used keeps the
+// dialog open, so the next one can be tried straight away.
+func (a *application) changeHotkey() {
+	if a.modal > 0 {
+		return
+	}
+	var (
+		f     form
+		field *walk.LineEdit
+	)
+	a.exec(Dialog{
+		Title:   "Set shortcut",
+		MinSize: Size{Width: 380},
+		Layout:  VBox{},
+		Children: append([]Widget{
+			Label{Text: "Shortcut, for example Win+Y or Ctrl+Alt+K"},
+			LineEdit{AssignTo: &field, Text: a.activeHotkey},
+		}, f.buttons("OK", func() {
+			name := strings.TrimSpace(field.Text())
+			if err := a.hotkeys.set(name); err != nil {
+				f.status.SetText(err.Error() + " Try another one.")
+				return
+			}
+			a.setActiveHotkey(name)
+			a.cfg.Hotkey = name
+			if err := saveConfig(a.cfg); err != nil {
+				f.status.SetText(err.Error())
+				return
+			}
+			f.dlg.Accept()
+		})...),
+	}, &f, func() walk.Widget { return field })
+}
+
 func (a *application) box(message string, style walk.MsgBoxStyle) int {
 	a.modal++
 	defer func() { a.modal-- }()

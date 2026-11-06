@@ -192,7 +192,7 @@ func (a *application) styleCell(style *walk.CellStyle) {
 	bounds.X += padding
 	bounds.Width -= 2 * padding
 	text, _ := a.model.Value(style.Row(), style.Col()).(string)
-	if a.showCopied && style.Col() == loginColumn && a.model.rows[style.Row()] == a.copied {
+	if a.showCopied && style.Col() == a.copiedColumn && a.model.rows[style.Row()] == a.copied {
 		text = copiedNotice
 	}
 	canvas.DrawTextPixels(text, a.table.Font(), walkColor(foreground), bounds,

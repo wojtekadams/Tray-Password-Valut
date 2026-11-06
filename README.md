@@ -18,8 +18,8 @@ and no runtime to install.
 | --- | --- |
 | Typing | Filters by name and username |
 | Up / Down | Selects an entry |
-| Clicking a password, Enter | Copies the password and hides the popup |
-| Clicking a login, Ctrl+U | Copies the username and keeps the popup open |
+| Clicking a password, Enter | Copies the password and shows **Copied** in its place |
+| Clicking a login, Ctrl+U | Copies the username and shows **Copied** in its place |
 | Ctrl+N, **+** button | Adds an entry (name, username, password) |
 | Esc, clicking outside | Hides the popup |
 
@@ -38,17 +38,13 @@ they are unavailable, the app stays light.
 
 ## Keyboard shortcut
 
-Windows 11 usually reserves Win+W for Widgets, so the app tries `Win+W`,
-`Win+Shift+W` and `Ctrl+Alt+W` in that order. The tray icon tooltip shows the active
-shortcut. To set your own, edit `%APPDATA%\TrayPasswordVault\config.json` and restart
-the app:
+Windows 11 assigns every Win+letter combination to something and usually keeps Win+W for
+Widgets, so the app tries `Win+W`, `Win+Shift+W` and `Ctrl+Alt+W` in that order. The tray
+icon tooltip shows the active shortcut.
 
-```json
-{
-  "databasePath": "C:\\Users\\me\\passwords.kdbx",
-  "hotkey": "Ctrl+Shift+Space"
-}
-```
+To use your own, choose **Set shortcut…** in the tray menu, type it, for example `Win+Y`
+or `Ctrl+Shift+Space`, and press **OK**. A shortcut that is already in use is rejected, so
+you can try another. It is saved in `%APPDATA%\TrayPasswordVault\config.json`.
 
 ## KeePass compatibility
 

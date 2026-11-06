@@ -41,6 +41,9 @@ type application struct {
 	table     *walk.TableView
 	addButton *walk.PushButton
 
+	hotkeys      *hotkeyListener
+	activeHotkey string
+
 	palette                     theme.Palette
 	backgroundBrush, inputBrush *walk.SolidColorBrush
 	model                       *entryModel
@@ -49,15 +52,16 @@ type application struct {
 	lockAction *walk.Action
 	autostart  *walk.Action
 
-	modal      int // open modal dialogs
-	hiddenAt   time.Time
-	exiting    bool
-	clipSecret string      // password on the clipboard, "" if none
-	clipGen    int         // identifies the latest copy, so older timers do nothing
-	dialog     *form       // open dialog, if any
-	copied     vault.Entry // entry whose login shows copiedNotice, if showCopied
-	showCopied bool
-	copiedGen  int
+	modal        int // open modal dialogs
+	hiddenAt     time.Time
+	exiting      bool
+	clipSecret   string      // password on the clipboard, "" if none
+	clipGen      int         // identifies the latest copy, so older timers do nothing
+	dialog       *form       // open dialog, if any
+	copied       vault.Entry // entry and column showing copiedNotice, if showCopied
+	copiedColumn int
+	showCopied   bool
+	copiedGen    int
 }
 
 type entryModel struct {
@@ -182,6 +186,7 @@ func (a *application) createTray() error {
 			a.show()
 		}
 	})
+	item("Set shortcut…", a.changeHotkey)
 	a.autostart = item("Start with Windows", func() {
 		if err := setAutostart(!autostartEnabled()); err != nil {
 			a.errorBox(err)
@@ -197,23 +202,28 @@ func (a *application) createTray() error {
 }
 
 func (a *application) startHotkey() {
+	a.hotkeys = newHotkeyListener(func() { a.mw.Synchronize(a.toggle) })
 	candidates := defaultHotkeys
 	if a.cfg.Hotkey != "" {
-		candidates = []string{a.cfg.Hotkey}
+		candidates = append([]string{a.cfg.Hotkey}, defaultHotkeys...)
 	}
-	active := listenHotkey(candidates, func() { a.mw.Synchronize(a.toggle) })
-	switch {
-	case active == "":
-		a.tray.ShowWarning(title, "Could not register the shortcut "+strings.Join(candidates, ", ")+
-			". Click the tray icon to open the vault.")
-	case active != candidates[0]:
-		a.tray.SetToolTip(title + " (" + active + ")")
-		if a.cfg.DatabasePath == "" {
-			a.tray.ShowInfo(title, candidates[0]+" is taken by Windows. Shortcut: "+active)
+	for _, name := range candidates {
+		if a.hotkeys.set(name) == nil {
+			a.setActiveHotkey(name)
+			break
 		}
-	default:
-		a.tray.SetToolTip(title + " (" + active + ")")
 	}
+	switch {
+	case a.activeHotkey == "":
+		a.tray.ShowWarning(title, "No shortcut is available. Choose one with Set shortcut in the tray menu.")
+	case a.activeHotkey != candidates[0] && (a.cfg.Hotkey != "" || a.cfg.DatabasePath == ""):
+		a.tray.ShowInfo(title, candidates[0]+" is not available. Shortcut: "+a.activeHotkey)
+	}
+}
+
+func (a *application) setActiveHotkey(name string) {
+	a.activeHotkey = name
+	a.tray.SetToolTip(title + " (" + name + ")")
 }
 
 func (a *application) toggle() {
@@ -359,9 +369,7 @@ func (a *application) selected() *vault.Entry {
 	return &a.model.rows[i]
 }
 
-// cellClicked copies the clicked value. The list sits in single-click mode, so
-// this runs once the mouse button is released: a popup hidden any earlier would
-// send the release to the application underneath.
+// cellClicked copies the clicked value.
 func (a *application) cellClicked() {
 	switch clickedColumn(a.table.Handle()) {
 	case loginColumn:
@@ -390,7 +398,7 @@ func (a *application) copyPassword() {
 			}
 		})
 	})
-	a.hide()
+	a.notifyCopied(e, passwordColumn)
 }
 
 func (a *application) copyUsername() {
@@ -402,8 +410,13 @@ func (a *application) copyUsername() {
 		a.errorBox(err)
 		return
 	}
-	// The popup stays open so the password can be copied next.
-	a.copied, a.showCopied = *e, true
+	a.notifyCopied(e, loginColumn)
+}
+
+// notifyCopied briefly replaces the copied cell's text with copiedNotice. The
+// popup stays open so that the other value can be copied next.
+func (a *application) notifyCopied(e *vault.Entry, column int) {
+	a.copied, a.copiedColumn, a.showCopied = *e, column, true
 	a.copiedGen++
 	generation := a.copiedGen
 	a.table.Invalidate()

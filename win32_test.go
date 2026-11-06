@@ -71,3 +71,33 @@ func TestClearClipboardIf(t *testing.T) {
 		t.Fatalf("clipboard = %q", got)
 	}
 }
+
+// The test shortcuts use keys that are absent from real keyboards.
+func TestHotkeyListener(t *testing.T) {
+	first := newHotkeyListener(func() {})
+	second := newHotkeyListener(func() {})
+	const a, b = "Ctrl+Alt+Shift+F23", "Ctrl+Alt+Shift+F24"
+
+	if err := first.set(a); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.set(a); err != nil {
+		t.Errorf("setting the active shortcut again: %v", err)
+	}
+	if err := second.set(a); err == nil {
+		t.Error("a shortcut in use was accepted")
+	}
+	if err := first.set("Ctrl+Nonsense"); err == nil {
+		t.Error("an invalid shortcut was accepted")
+	}
+	// A failed attempt must not cost the current shortcut.
+	if err := second.set(a); err == nil {
+		t.Error("the current shortcut was lost after a failed change")
+	}
+	if err := first.set(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.set(a); err != nil {
+		t.Errorf("the previous shortcut was not released: %v", err)
+	}
+}

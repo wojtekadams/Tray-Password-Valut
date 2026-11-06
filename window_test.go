@@ -116,7 +116,7 @@ func clickChecks(a *application) {
 		wantVisible bool
 	}{
 		{"login", 170, "bob", true},
-		{"password", 270, "secret-password", false},
+		{"password", 270, "secret-password", true},
 	} {
 		a.mw.Synchronize(func() {
 			var rc win.RECT
