@@ -19,6 +19,18 @@ import (
 	"github.com/tobischo/gokeepasslib/v3/wrappers"
 )
 
+// Argon2 settings of databases saved by this application. 30 iterations take
+// about half a second on a recent laptop.
+const (
+	argon2Memory     = 64 << 20
+	argon2Iterations = 30
+
+	// gokeepasslib's defaults, which earlier versions wrote to new databases.
+	// Such a file can be brute-forced quickly, so it is upgraded on the next save.
+	weakArgon2Memory     = 1 << 20
+	weakArgon2Iterations = 2
+)
+
 // ErrWrongPassword means the password does not open the database.
 var ErrWrongPassword = errors.New("wrong password")
 
@@ -66,9 +78,6 @@ func Create(path, password string) (*Vault, error) {
 
 	v := &Vault{path: path, creds: db.Credentials}
 	if err := v.write(db, 0); err != nil {
-		return nil, err
-	}
-	if err := v.Reload(); err != nil {
 		return nil, err
 	}
 	return v, nil
@@ -130,10 +139,7 @@ func (v *Vault) Add(title, username, password string) error {
 	root := &db.Content.Root.Groups[0]
 	root.Entries = append(root.Entries, e)
 
-	if err := v.write(db, countEntries(db)); err != nil {
-		return err
-	}
-	return v.Reload()
+	return v.write(db, countEntries(db))
 }
 
 // read decodes the file and leaves protected values unlocked.
@@ -173,10 +179,12 @@ func decode(r io.Reader, creds *gokeepasslib.DBCredentials) (*gokeepasslib.Datab
 	return db, nil
 }
 
-// write replaces the database file. db must be unlocked. The new file is only
-// put in place after it has been decoded again with wantEntries entries; the
-// previous version is kept next to it as <name>.bak.
+// write replaces the database file and updates the vault's state from it.
+// db must be unlocked. The new file is only put in place after it has been
+// decoded again with wantEntries entries; the previous version is kept next to
+// it as <name>.bak.
 func (v *Vault) write(db *gokeepasslib.Database, wantEntries int) error {
+	strengthenKDF(db)
 	if err := renewSeeds(db); err != nil {
 		return err
 	}
@@ -220,7 +228,15 @@ func (v *Vault) write(db *gokeepasslib.Database, wantEntries int) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	return renameRetry(tmp.Name(), v.path)
+	if err := renameRetry(tmp.Name(), v.path); err != nil {
+		return err
+	}
+	info, err := os.Stat(v.path)
+	if err != nil {
+		return err
+	}
+	v.setState(check, info.ModTime())
+	return nil
 }
 
 // renameRetry tolerates antivirus and sync clients, which briefly hold files
@@ -234,6 +250,18 @@ func renameRetry(from, to string) error {
 		time.Sleep(200 * time.Millisecond)
 	}
 	return err
+}
+
+// strengthenKDF upgrades the known weak Argon2 settings. Any other settings
+// were chosen in KeePass and are left alone.
+func strengthenKDF(db *gokeepasslib.Database) {
+	k := db.Header.FileHeaders.KdfParameters
+	if k == nil || !bytes.Equal(k.UUID, gokeepasslib.KdfArgon2) ||
+		k.Memory != weakArgon2Memory || k.Iterations != weakArgon2Iterations {
+		return
+	}
+	k.Memory = argon2Memory
+	k.Iterations = argon2Iterations
 }
 
 // renewSeeds replaces all per-save random values, as KeePass does on each save.

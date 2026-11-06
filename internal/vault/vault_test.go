@@ -299,3 +299,93 @@ func TestMask(t *testing.T) {
 		}
 	}
 }
+
+// writeDatabase creates a KDBX 4 file with the given Argon2 settings, bypassing
+// Vault, as an earlier version of this application or KeePass would have.
+func writeDatabase(t *testing.T, memory, iterations uint64) string {
+	t.Helper()
+	db := gokeepasslib.NewDatabase(gokeepasslib.WithDatabaseKDBXVersion41())
+	db.Credentials = gokeepasslib.NewPasswordCredentials(fixturePassword)
+	k := db.Header.FileHeaders.KdfParameters
+	k.Memory, k.Iterations = memory, iterations
+	if err := db.LockProtectedEntries(); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "kdf.kdbx")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := gokeepasslib.NewEncoder(f).Encode(db); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func kdfParameters(t *testing.T, path string) *gokeepasslib.KdfParameters {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	db, err := decode(f, gokeepasslib.NewPasswordCredentials(fixturePassword))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db.Header.FileHeaders.KdfParameters
+}
+
+func TestCreateUsesStrongKDF(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "new.kdbx")
+	if _, err := Create(path, fixturePassword); err != nil {
+		t.Fatal(err)
+	}
+	k := kdfParameters(t, path)
+	if k.Memory != argon2Memory || k.Iterations != argon2Iterations {
+		t.Fatalf("memory = %d, iterations = %d", k.Memory, k.Iterations)
+	}
+}
+
+func TestSaveUpgradesOnlyWeakKDF(t *testing.T) {
+	cases := []struct {
+		name                       string
+		memory, iterations         uint64
+		wantMemory, wantIterations uint64
+	}{
+		{"weak", weakArgon2Memory, weakArgon2Iterations, argon2Memory, argon2Iterations},
+		{"chosen in KeePass", 2 << 20, 3, 2 << 20, 3},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := writeDatabase(t, c.memory, c.iterations)
+			v, err := Open(path, fixturePassword)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := len(v.Entries())
+			if err := v.Add("Nowy", "jan", "pass"); err != nil {
+				t.Fatal(err)
+			}
+			k := kdfParameters(t, path)
+			if k.Memory != c.wantMemory || k.Iterations != c.wantIterations {
+				t.Fatalf("memory = %d, iterations = %d", k.Memory, k.Iterations)
+			}
+			reopened, err := Open(path, fixturePassword)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := len(reopened.Entries()); got != before+1 {
+				t.Fatalf("entries = %d, want %d", got, before+1)
+			}
+			if v.Changed() {
+				t.Error("Changed() = true right after this vault saved the file")
+			}
+			if dir := os.Getenv("VAULT_KEEP_DIR"); dir != "" {
+				data, _ := os.ReadFile(path)
+				os.WriteFile(filepath.Join(dir, strings.ReplaceAll(c.name, " ", "-")+".kdbx"), data, 0o600)
+			}
+		})
+	}
+}

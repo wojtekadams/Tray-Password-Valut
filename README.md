@@ -60,10 +60,12 @@ the app:
   releases the references, but does not guarantee they leave RAM immediately.
 - The vault locks itself when the screen locks, when the system sleeps, and after 15
   minutes without keyboard or mouse input. The password is asked for again on next use.
-- Databases created by this app use weak Argon2 settings (1 MiB of memory, 2 iterations)
-  and accept any master password length, so a stolen file is easy to brute-force. Until
-  this is fixed, use a long master password, or create the database in KeePass or
-  KeePassXC and open it here. Their settings are kept when this app saves.
+- New databases use Argon2 with 64 MiB of memory and 30 iterations, and require a master
+  password of at least 12 characters.
+- Saving also upgrades a database that still has the settings earlier versions of this
+  app wrote (1 MiB, 2 iterations), including a KeePass database with those exact values.
+  Any other KeePass settings are kept. Older copies of the file, such as cloud history
+  or the `.bak` from before the upgrade, stay weak until they are deleted.
 - The exe is not signed, so SmartScreen may show a warning on first launch.
 
 ## Building

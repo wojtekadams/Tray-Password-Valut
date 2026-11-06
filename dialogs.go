@@ -4,14 +4,19 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/tailscale/walk"
 	. "github.com/tailscale/walk/declarative"
 
 	"github.com/wojtekadams/Tray-Password-Valut/internal/vault"
 )
+
+// minMasterPassword is the shortest master password accepted for a new database.
+const minMasterPassword = 12
 
 const kdbxFilter = "KeePass database (*.kdbx)|*.kdbx|All files (*.*)|*.*"
 
@@ -201,8 +206,8 @@ func (a *application) createDatabase(path string) bool {
 		}, f.buttons("Create", func() {
 			text := password.Text()
 			switch {
-			case text == "":
-				f.status.SetText("Password cannot be empty.")
+			case utf8.RuneCountInString(text) < minMasterPassword:
+				f.status.SetText(fmt.Sprintf("Use at least %d characters.", minMasterPassword))
 			case text != again.Text():
 				f.status.SetText("Passwords do not match.")
 			default:
