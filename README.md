@@ -86,3 +86,7 @@ go-winres make --arch amd64
 GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-H=windowsgui -s -w" -o TrayPasswordVault.exe .
 go test ./internal/...
 ```
+
+## License
+
+[MIT](LICENSE)
