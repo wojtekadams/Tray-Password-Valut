@@ -73,8 +73,9 @@ you can try another. It is saved in `%APPDATA%\TrayPasswordVault\config.json`.
 
 ## Building
 
-GitHub Actions builds the exe: every push produces a `TrayPasswordVault` artifact, and
-a `v*` tag creates a Release. To build locally (also works from macOS or Linux):
+GitHub Actions builds the exe and packs it with the license into `TrayPasswordVault.zip`:
+every push produces a `TrayPasswordVault` artifact, and a `v*` tag creates a Release with
+both files. To build locally (also works from macOS or Linux):
 
 ```sh
 go install github.com/tc-hib/go-winres@latest

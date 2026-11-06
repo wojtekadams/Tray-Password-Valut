@@ -54,11 +54,18 @@ jobs:
           Start-Sleep -Seconds 5
           if ($p.HasExited) { throw "App exited with code $($p.ExitCode)" }
           Stop-Process -Id $p.Id
+          $p.WaitForExit()
+
+      - name: Package
+        shell: pwsh
+        run: Compress-Archive -Path TrayPasswordVault.exe, LICENSE -DestinationPath TrayPasswordVault.zip
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: TrayPasswordVault
-          path: TrayPasswordVault.exe
+          path: |
+            TrayPasswordVault.exe
+            TrayPasswordVault.zip
           if-no-files-found: error
 
   release:
@@ -73,4 +80,4 @@ jobs:
           name: TrayPasswordVault
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" TrayPasswordVault.exe --repo "$GITHUB_REPOSITORY" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" TrayPasswordVault.exe TrayPasswordVault.zip --repo "$GITHUB_REPOSITORY" --generate-notes
