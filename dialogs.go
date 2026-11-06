@@ -257,7 +257,7 @@ func (a *application) addEntry() {
 		a.refresh()
 	}
 	if a.mw.Visible() {
-		placeOnTop(a.mw.Handle())
+		a.placePopup()
 		a.search.SetFocus()
 	}
 }

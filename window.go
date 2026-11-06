@@ -23,7 +23,7 @@ const (
 	loginButtonText = "Login"
 
 	// Popup size in pixels at 100% scaling.
-	popupWidth, popupHeight, popupMargin = 340, 360, 12
+	popupWidth, popupHeight, popupMargin = 340, 180, 12
 )
 
 // defaultHotkeys are tried in order. Windows 11 usually keeps Win+W for Widgets.
@@ -60,10 +60,14 @@ type entryModel struct {
 func (m *entryModel) RowCount() int { return len(m.rows) }
 
 func (m *entryModel) Value(row, col int) any {
-	if col == 0 {
+	switch col {
+	case 0:
 		return m.rows[row].Title
+	case 1:
+		return m.rows[row].Username
+	default:
+		return vault.Mask(m.rows[row].Password)
 	}
-	return m.rows[row].Username
 }
 
 func (a *application) createWindow() error {
@@ -89,8 +93,9 @@ func (a *application) createWindow() error {
 				HeaderHidden:        true,
 				LastColumnStretched: true,
 				Columns: []TableViewColumn{
-					{Title: "Name", Width: 170},
-					{Title: "Login"},
+					{Title: "Name", Width: 120},
+					{Title: "Login", Width: 100},
+					{Title: "Password"},
 				},
 				OnItemActivated: a.copyPassword,
 			},
@@ -225,13 +230,18 @@ func (a *application) show() {
 	}
 	a.refresh()
 	a.mw.Show()
-	scale := func(v int) int32 { return int32(a.mw.IntFrom96DPI(v)) }
-	placeAboveTray(a.mw.Handle(), scale(popupWidth), scale(popupHeight), scale(popupMargin))
+	a.placePopup()
 	a.search.SetFocus()
 	a.search.SetTextSelection(0, -1) // typing replaces the previous search
 	if v := a.vault; v.Changed() {
 		go a.reload(v)
 	}
+}
+
+// placePopup puts the window in its place above the tray and focuses it.
+func (a *application) placePopup() {
+	scale := func(v int) int32 { return int32(a.mw.IntFrom96DPI(v)) }
+	placeAboveTray(a.mw.Handle(), scale(popupWidth), scale(popupHeight), scale(popupMargin))
 }
 
 // reload picks up changes made by KeePass or a sync client.

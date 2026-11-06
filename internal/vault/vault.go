@@ -300,3 +300,18 @@ func walkGroups(groups []gokeepasslib.Group, skip func(*gokeepasslib.Group) bool
 		walkGroups(g.Groups, skip, visit)
 	}
 }
+
+// Mask hides a password for display, keeping its first three characters. The
+// mask has a fixed length so it does not reveal how long the password is, and
+// a password of three characters or fewer shows none of them.
+func Mask(password string) string {
+	const dots = "•••••"
+	if password == "" {
+		return ""
+	}
+	runes := []rune(password)
+	if len(runes) <= 3 {
+		return dots
+	}
+	return string(runes[:3]) + dots
+}

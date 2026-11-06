@@ -283,3 +283,19 @@ func TestFormats(t *testing.T) {
 		})
 	}
 }
+
+func TestMask(t *testing.T) {
+	cases := map[string]string{
+		"":                 "",
+		"a":                "•••••",
+		"abc":              "•••••",
+		"abcd":             "abc•••••",
+		"a-very-long-pass": "a-v•••••",
+		"ąćęł":             "ąćę•••••",
+	}
+	for in, want := range cases {
+		if got := Mask(in); got != want {
+			t.Errorf("Mask(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

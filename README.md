@@ -23,6 +23,9 @@ and no runtime to install.
 | Ctrl+N, **+** button | Adds an entry (name, username, password) |
 | Esc, clicking outside | Hides the popup |
 
+The list shows passwords masked, with only their first three characters visible.
+Passwords of three characters or fewer are fully hidden.
+
 Passwords are cleared from the clipboard after 30 seconds and are kept out of
 clipboard history (Win+V).
 
