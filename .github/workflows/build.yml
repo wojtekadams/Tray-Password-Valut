@@ -1,0 +1,75 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GO_WINRES_VERSION: v0.3.3
+
+jobs:
+  # Checks that a real KeePass client can open the files this app writes.
+  keepassxc-interop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: sudo apt-get update && sudo apt-get install -y keepassxc
+      - run: go test -v -run TestKeePassXC ./internal/vault/
+
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Test
+        run: go test ./internal/...
+
+      - name: Generate Windows resources (icon, manifest)
+        run: |
+          go install github.com/tc-hib/go-winres@${{ env.GO_WINRES_VERSION }}
+          go-winres make --arch amd64
+
+      - name: Build
+        env:
+          CGO_ENABLED: "0"
+        run: go build -trimpath -ldflags "-H=windowsgui -s -w" -o TrayPasswordVault.exe .
+
+      - name: Smoke test (the app must start and stay running)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath .\TrayPasswordVault.exe -PassThru
+          Start-Sleep -Seconds 5
+          if ($p.HasExited) { throw "App exited with code $($p.ExitCode)" }
+          Stop-Process -Id $p.Id
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TrayPasswordVault
+          path: TrayPasswordVault.exe
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, keepassxc-interop]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: TrayPasswordVault
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" TrayPasswordVault.exe --repo "$GITHUB_REPOSITORY" --generate-notes
