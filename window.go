@@ -18,6 +18,7 @@ import (
 const (
 	title          = "Tray Password Vault"
 	clipboardClear = 30 * time.Second
+	autoLockAfter  = 15 * time.Minute
 
 	loginButtonText = "Login"
 
@@ -43,10 +44,12 @@ type application struct {
 	lockAction *walk.Action
 	autostart  *walk.Action
 
-	modal    int // open modal dialogs
-	hiddenAt time.Time
-	exiting  bool
-	clipSeq  uint32 // sequence number of a password on the clipboard, 0 if none
+	modal      int // open modal dialogs
+	hiddenAt   time.Time
+	exiting    bool
+	clipSecret string // password on the clipboard, "" if none
+	clipGen    int    // identifies the latest copy, so older timers do nothing
+	dialog     *form  // open dialog, if any
 }
 
 type entryModel struct {
@@ -104,6 +107,9 @@ func (a *application) createWindow() error {
 		return err
 	}
 	a.buttons = []*walk.PushButton{a.copyLogin, copyPassword, add}
+	// walk always creates a visible toolbar. Empty, it reserves no space but is
+	// still stretched across the top of the window, covering the search box.
+	a.mw.ToolBar().SetVisible(false)
 	makePopup(a.mw.Handle())
 
 	if icon := appIcon(); icon != nil {
@@ -251,6 +257,9 @@ func (a *application) hide() {
 }
 
 func (a *application) lock() {
+	if a.dialog != nil && !a.dialog.busy {
+		a.dialog.dlg.Cancel()
+	}
 	a.vault = nil
 	a.lockAction.SetEnabled(false)
 	a.model.rows = nil
@@ -260,6 +269,28 @@ func (a *application) lock() {
 	if a.mw.Visible() {
 		a.hide()
 	}
+}
+
+// startAutoLock locks the vault when the session locks, the system sleeps or
+// the user has been idle for autoLockAfter.
+func (a *application) startAutoLock() {
+	autoLock := func() {
+		a.mw.Synchronize(func() {
+			if a.vault != nil {
+				a.lock()
+			}
+		})
+	}
+	if err := watchSession(a.mw.Handle(), autoLock); err != nil {
+		a.tray.ShowWarning(title, "Auto-lock on screen lock is unavailable: "+err.Error())
+	}
+	go func() {
+		for range time.Tick(30 * time.Second) {
+			if idleTime() >= autoLockAfter {
+				autoLock()
+			}
+		}
+	}()
 }
 
 func (a *application) exit() {
@@ -315,15 +346,16 @@ func (a *application) copyPassword() {
 	if e == nil {
 		return
 	}
-	seq, err := setClipboard(a.mw.Handle(), e.Password)
-	if err != nil {
+	if err := setClipboard(a.mw.Handle(), e.Password); err != nil {
 		a.errorBox(err)
 		return
 	}
-	a.clipSeq = seq
+	a.clipSecret = e.Password
+	a.clipGen++
+	generation := a.clipGen
 	time.AfterFunc(clipboardClear, func() {
 		a.mw.Synchronize(func() {
-			if a.clipSeq == seq {
+			if a.clipGen == generation {
 				a.wipeClipboard()
 			}
 		})
@@ -336,7 +368,7 @@ func (a *application) copyUsername() {
 	if e == nil {
 		return
 	}
-	if _, err := setClipboard(a.mw.Handle(), e.Username); err != nil {
+	if err := setClipboard(a.mw.Handle(), e.Username); err != nil {
 		a.errorBox(err)
 		return
 	}
@@ -348,9 +380,9 @@ func (a *application) copyUsername() {
 }
 
 func (a *application) wipeClipboard() {
-	if a.clipSeq != 0 {
-		clearClipboard(a.mw.Handle(), a.clipSeq)
-		a.clipSeq = 0
+	if a.clipSecret != "" {
+		clearClipboardIf(a.mw.Handle(), a.clipSecret)
+		a.clipSecret = ""
 	}
 }
 

@@ -89,7 +89,11 @@ func (a *application) exec(d Dialog, f *form, focus func() walk.Widget) bool {
 		focus().SetFocus()
 	})
 	a.modal++
-	defer func() { a.modal-- }()
+	a.dialog = f
+	defer func() {
+		a.modal--
+		a.dialog = nil
+	}()
 	return f.dlg.Run() == walk.DlgCmdOK
 }
 

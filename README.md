@@ -52,11 +52,15 @@ the app:
 
 ## Security
 
-- Passwords stay in process memory in plain text while the database is unlocked, and
-  Go offers no reliable way to wipe them. The tray menu's **Lock** option
+- Passwords and a hash of the master password stay in process memory while the
+  database is unlocked, and Go offers no reliable way to wipe them. The tray menu's **Lock** option
   releases the references, but does not guarantee they leave RAM immediately.
-- There is no auto-lock: once the password is entered, the list stays available until
-  you lock the vault or log out.
+- The vault locks itself when the screen locks, when the system sleeps, and after 15
+  minutes without keyboard or mouse input. The password is asked for again on next use.
+- Databases created by this app use weak Argon2 settings (1 MiB of memory, 2 iterations)
+  and accept any master password length, so a stolen file is easy to brute-force. Until
+  this is fixed, use a long master password, or create the database in KeePass or
+  KeePassXC and open it here. Their settings are kept when this app saves.
 - The exe is not signed, so SmartScreen may show a warning on first launch.
 
 ## Building

@@ -33,6 +33,7 @@ func main() {
 
 	app.AddGlobalPreTranslateHandler(a)
 	a.startHotkey()
+	a.startAutoLock()
 	if autostartEnabled() {
 		setAutostart(true) // follow the exe if it was moved
 	}

@@ -23,17 +23,26 @@ const (
 	runKeyPath  = `Software\Microsoft\Windows\CurrentVersion\Run`
 	modNoRepeat = 0x4000
 
+	wmPowerBroadcast     = 0x0218
+	wmWTSSessionChange   = 0x02B1
+	pbtAPMSuspend        = 0x0004
+	wtsSessionLock       = 0x0007
+	notifyForThisSession = 0
+
 	dwmWindowCornerPreference = 33
 	dwmCornerRound            = 2
 )
 
 var (
-	user32                    = windows.NewLazySystemDLL("user32.dll")
-	procRegisterHotKey        = user32.NewProc("RegisterHotKey")
-	procGetMessage            = user32.NewProc("GetMessageW")
-	procRegisterClipboardFmt  = user32.NewProc("RegisterClipboardFormatW")
-	procGetClipboardSeqNumber = user32.NewProc("GetClipboardSequenceNumber")
-	procMonitorFromPoint      = user32.NewProc("MonitorFromPoint")
+	user32                   = windows.NewLazySystemDLL("user32.dll")
+	procRegisterHotKey       = user32.NewProc("RegisterHotKey")
+	procGetMessage           = user32.NewProc("GetMessageW")
+	procRegisterClipboardFmt = user32.NewProc("RegisterClipboardFormatW")
+	procMonitorFromPoint     = user32.NewProc("MonitorFromPoint")
+
+	procGetLastInputInfo = user32.NewProc("GetLastInputInfo")
+	procGetTickCount     = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetTickCount")
+	procWTSRegister      = windows.NewLazySystemDLL("wtsapi32.dll").NewProc("WTSRegisterSessionNotification")
 
 	procDwmSetWindowAttribute = windows.NewLazySystemDLL("dwmapi.dll").NewProc("DwmSetWindowAttribute")
 )
@@ -85,31 +94,21 @@ func listenHotkey(candidates []string, onPress func()) string {
 }
 
 // setClipboard stores text, marked so that it stays out of Windows clipboard
-// history (Win+V), cloud clipboard and clipboard monitors. It returns the
-// clipboard sequence number identifying this content.
-func setClipboard(hwnd win.HWND, text string) (uint32, error) {
+// history (Win+V), cloud clipboard and clipboard monitors. The marks go first:
+// if one fails, the text is never placed on the clipboard.
+func setClipboard(hwnd win.HWND, text string) error {
 	utf16, err := windows.UTF16FromString(text)
 	if err != nil {
-		return 0, err
+		return err
 	}
 	if err := openClipboard(hwnd); err != nil {
-		return 0, err
+		return err
 	}
 	defer win.CloseClipboard()
 
 	if !win.EmptyClipboard() {
-		return 0, errors.New("EmptyClipboard failed")
+		return errors.New("EmptyClipboard failed")
 	}
-	mem, err := globalCopy(unsafe.Slice((*byte)(unsafe.Pointer(&utf16[0])), len(utf16)*2))
-	if err != nil {
-		return 0, err
-	}
-	if win.SetClipboardData(win.CF_UNICODETEXT, win.HANDLE(mem)) == 0 {
-		win.GlobalFree(mem)
-		return 0, errors.New("SetClipboardData failed")
-	}
-
-	zero := make([]byte, 4)
 	for _, format := range []string{
 		"ExcludeClipboardContentFromMonitorProcessing",
 		"CanIncludeInClipboardHistory",
@@ -117,30 +116,66 @@ func setClipboard(hwnd win.HWND, text string) (uint32, error) {
 	} {
 		name, _ := windows.UTF16PtrFromString(format)
 		id, _, _ := procRegisterClipboardFmt.Call(uintptr(unsafe.Pointer(name)))
-		mem, err := globalCopy(zero)
-		if id == 0 || err != nil {
-			return 0, fmt.Errorf("clipboard format %s: %w", format, err)
+		if id == 0 {
+			win.EmptyClipboard()
+			return fmt.Errorf("register clipboard format %s", format)
 		}
-		if win.SetClipboardData(uint32(id), win.HANDLE(mem)) == 0 {
-			win.GlobalFree(mem)
+		if err := putClipboardData(uint32(id), make([]byte, 4)); err != nil {
+			win.EmptyClipboard()
+			return err
 		}
 	}
-	return clipboardSequence(), nil
+	data := unsafe.Slice((*byte)(unsafe.Pointer(&utf16[0])), len(utf16)*2)
+	if err := putClipboardData(win.CF_UNICODETEXT, data); err != nil {
+		win.EmptyClipboard()
+		return err
+	}
+	return nil
 }
 
-// clearClipboard empties the clipboard if it still holds the content identified
-// by seq, so that anything copied by the user afterwards is left alone.
-func clearClipboard(hwnd win.HWND, seq uint32) {
-	if clipboardSequence() != seq || openClipboard(hwnd) != nil {
+// clearClipboardIf empties the clipboard if it still holds text, so that
+// anything copied by the user afterwards is left alone.
+func clearClipboardIf(hwnd win.HWND, text string) {
+	if openClipboard(hwnd) != nil {
 		return
 	}
 	defer win.CloseClipboard()
-	win.EmptyClipboard()
+	if clipboardText() == text {
+		win.EmptyClipboard()
+	}
 }
 
-func clipboardSequence() uint32 {
-	r, _, _ := procGetClipboardSeqNumber.Call()
-	return uint32(r)
+// clipboardText returns the clipboard's text. The clipboard must be open.
+func clipboardText() string {
+	mem := win.HGLOBAL(win.GetClipboardData(win.CF_UNICODETEXT))
+	if mem == 0 {
+		return ""
+	}
+	p := win.GlobalLock(mem)
+	if p == nil {
+		return ""
+	}
+	defer win.GlobalUnlock(mem)
+	return windows.UTF16PtrToString((*uint16)(p))
+}
+
+func putClipboardData(format uint32, data []byte) error {
+	mem := win.GlobalAlloc(win.GMEM_MOVEABLE, uintptr(len(data)))
+	if mem == 0 {
+		return errors.New("GlobalAlloc failed")
+	}
+	p := win.GlobalLock(mem)
+	if p == nil {
+		win.GlobalFree(mem)
+		return errors.New("GlobalLock failed")
+	}
+	copy(unsafe.Slice((*byte)(p), len(data)), data)
+	win.GlobalUnlock(mem)
+	if win.SetClipboardData(format, win.HANDLE(mem)) == 0 {
+		win.GlobalFree(mem)
+		return errors.New("SetClipboardData failed")
+	}
+	return nil
 }
 
 // openClipboard retries because other applications hold the clipboard briefly.
@@ -152,21 +187,6 @@ func openClipboard(hwnd win.HWND) error {
 		time.Sleep(20 * time.Millisecond)
 	}
 	return errors.New("clipboard is in use by another application")
-}
-
-func globalCopy(data []byte) (win.HGLOBAL, error) {
-	mem := win.GlobalAlloc(win.GMEM_MOVEABLE, uintptr(len(data)))
-	if mem == 0 {
-		return 0, errors.New("GlobalAlloc failed")
-	}
-	p := win.GlobalLock(mem)
-	if p == nil {
-		win.GlobalFree(mem)
-		return 0, errors.New("GlobalLock failed")
-	}
-	copy(unsafe.Slice((*byte)(p), len(data)), data)
-	win.GlobalUnlock(mem)
-	return mem, nil
 }
 
 // monitorUnderCursor returns the bounds of the monitor the cursor is on.
@@ -220,6 +240,38 @@ func makePopup(hwnd win.HWND) {
 
 	win.SetWindowPos(hwnd, 0, 0, 0, 0, 0,
 		win.SWP_NOMOVE|win.SWP_NOSIZE|win.SWP_NOZORDER|win.SWP_FRAMECHANGED)
+}
+
+// watchSession calls onLock when the session is locked or the system is about
+// to sleep. Both arrive as window messages, which walk does not expose, so the
+// window procedure is wrapped. onLock runs inside that procedure.
+func watchSession(hwnd win.HWND, onLock func()) error {
+	if ok, _, err := procWTSRegister.Call(uintptr(hwnd), notifyForThisSession); ok == 0 {
+		return fmt.Errorf("WTSRegisterSessionNotification: %w", err)
+	}
+	original := win.GetWindowLongPtr(hwnd, win.GWLP_WNDPROC)
+	proc := windows.NewCallback(func(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
+		if msg == wmWTSSessionChange && wParam == wtsSessionLock ||
+			msg == wmPowerBroadcast && wParam == pbtAPMSuspend {
+			onLock()
+		}
+		return win.CallWindowProc(original, hwnd, msg, wParam, lParam)
+	})
+	win.SetWindowLongPtr(hwnd, win.GWLP_WNDPROC, proc)
+	return nil
+}
+
+// idleTime returns how long ago the user last touched the keyboard or mouse.
+func idleTime() time.Duration {
+	info := struct {
+		size uint32
+		time uint32
+	}{size: 8}
+	if ok, _, _ := procGetLastInputInfo.Call(uintptr(unsafe.Pointer(&info))); ok == 0 {
+		return 0
+	}
+	now, _, _ := procGetTickCount.Call()
+	return time.Duration(uint32(now)-info.time) * time.Millisecond
 }
 
 func autostartEnabled() bool {
