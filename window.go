@@ -12,6 +12,7 @@ import (
 	. "github.com/tailscale/walk/declarative"
 	"github.com/tailscale/win"
 
+	"github.com/wojtekadams/Tray-Password-Valut/internal/theme"
 	"github.com/wojtekadams/Tray-Password-Valut/internal/vault"
 )
 
@@ -24,6 +25,8 @@ const (
 
 	// Popup size in pixels at 100% scaling.
 	popupWidth, popupHeight, popupMargin = 340, 180, 12
+
+	passwordColumn = 2
 )
 
 // defaultHotkeys are tried in order. Windows 11 usually keeps Win+W for Widgets.
@@ -38,7 +41,10 @@ type application struct {
 	table     *walk.TableView
 	buttons   []*walk.PushButton
 	copyLogin *walk.PushButton
-	model     *entryModel
+
+	palette                     theme.Palette
+	backgroundBrush, inputBrush *walk.SolidColorBrush
+	model                       *entryModel
 
 	tray       *walk.NotifyIcon
 	lockAction *walk.Action
@@ -77,6 +83,7 @@ func (a *application) createWindow() error {
 		AssignTo: &a.mw,
 		Visible:  false,
 		Title:    title,
+		Font:     uiFont(),
 		Size:     Size{Width: popupWidth, Height: popupHeight},
 		Layout:   VBox{Margins: Margins{Left: 8, Top: 8, Right: 8, Bottom: 8}, Spacing: 6},
 		Children: []Widget{
@@ -91,6 +98,7 @@ func (a *application) createWindow() error {
 				AssignTo:            &a.table,
 				Model:               a.model,
 				HeaderHidden:        true,
+				StyleCell:           a.styleCell,
 				LastColumnStretched: true,
 				Columns: []TableViewColumn{
 					{Title: "Name", Width: 120},
@@ -119,6 +127,8 @@ func (a *application) createWindow() error {
 	a.mw.SetToolBar(nil)
 	toolBar.Dispose()
 	makePopup(a.mw.Handle())
+	removeBorder(a.table.Handle())
+	a.applyPalette(systemPalette())
 
 	if icon := appIcon(); icon != nil {
 		a.mw.SetIcon(icon)
@@ -225,6 +235,7 @@ func (a *application) show() {
 	if a.modal > 0 {
 		return
 	}
+	a.updateTheme()
 	if a.vault == nil && !a.unlock() {
 		return
 	}

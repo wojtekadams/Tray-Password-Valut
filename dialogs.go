@@ -79,10 +79,15 @@ func (a *application) exec(d Dialog, f *form, focus func() walk.Widget) bool {
 	d.DefaultButton = &f.ok
 	d.CancelButton = &f.cancel
 	d.FixedSize = true
+	d.Font = uiFont()
 	if err := d.Create(a.mw); err != nil {
 		a.errorBox(err)
 		return false
 	}
+	f.dlg.SetBackground(a.backgroundBrush)
+	setDarkTitle(f.dlg.Handle(), a.palette.Dark)
+	a.themeChildren(f.dlg)
+	f.status.SetTextColor(walkColor(a.palette.Error))
 	f.dlg.Closing().Attach(func(canceled *bool, _ walk.CloseReason) {
 		*canceled = f.busy // the background work must finish first
 	})
@@ -234,6 +239,7 @@ func (a *application) addEntry() {
 	var (
 		f                    form
 		name, user, password *walk.LineEdit
+		reveal               *walk.PushButton
 	)
 	accepted := a.exec(Dialog{
 		Title:   "Add password",
@@ -245,10 +251,23 @@ func (a *application) addEntry() {
 			Label{Text: "Username"},
 			LineEdit{AssignTo: &user},
 			Label{Text: "Password"},
-			LineEdit{AssignTo: &password, PasswordMode: true},
-			CheckBox{Text: "Show password", OnCheckedChanged: func() {
-				password.SetPasswordMode(!password.PasswordMode())
-			}},
+			Composite{
+				Layout: HBox{MarginsZero: true},
+				Children: []Widget{
+					LineEdit{AssignTo: &password, PasswordMode: true},
+					// A button, because a themed check box ignores text colours
+					// and would stay black in dark mode.
+					PushButton{AssignTo: &reveal, Text: "Show", MaxSize: Size{Width: 60}, OnClicked: func() {
+						hidden := !password.PasswordMode()
+						password.SetPasswordMode(hidden)
+						if hidden {
+							reveal.SetText("Show")
+						} else {
+							reveal.SetText("Hide")
+						}
+					}},
+				},
+			},
 		}, f.buttons("Save", func() {
 			title, username, secret := strings.TrimSpace(name.Text()), user.Text(), password.Text()
 			if title == "" {

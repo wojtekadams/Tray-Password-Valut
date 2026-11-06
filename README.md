@@ -29,6 +29,13 @@ Passwords of three characters or fewer are fully hidden.
 Passwords are cleared from the clipboard after 30 seconds and are kept out of
 clipboard history (Win+V).
 
+## Appearance
+
+The app follows the Windows 11 look: Segoe UI Variable, rounded corners and the system's
+accent colour. It uses the light or dark app mode set in Windows and picks up a change
+the next time the popup opens. Dark mode relies on undocumented Windows functions; if
+they are unavailable, the app stays light.
+
 ## Keyboard shortcut
 
 Windows 11 usually reserves Win+W for Widgets, so the app tries `Win+W`,

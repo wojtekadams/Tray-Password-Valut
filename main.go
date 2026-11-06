@@ -19,6 +19,7 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
+	initDarkMode()
 	a := &application{}
 	if a.cfg, err = loadConfig(); err != nil {
 		fatal(fmt.Errorf("read configuration: %w", err))
