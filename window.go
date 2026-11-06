@@ -21,12 +21,12 @@ const (
 	clipboardClear = 30 * time.Second
 	autoLockAfter  = 15 * time.Minute
 
-	loginButtonText = "Login"
+	copiedNotice = "Copied ✓"
 
 	// Popup size in pixels at 100% scaling.
 	popupWidth, popupHeight, popupMargin = 340, 180, 12
 
-	passwordColumn = 2
+	loginColumn, passwordColumn = 1, 2
 )
 
 // defaultHotkeys are tried in order. Windows 11 usually keeps Win+W for Widgets.
@@ -39,8 +39,7 @@ type application struct {
 	mw        *walk.MainWindow
 	search    *walk.LineEdit
 	table     *walk.TableView
-	buttons   []*walk.PushButton
-	copyLogin *walk.PushButton
+	addButton *walk.PushButton
 
 	palette                     theme.Palette
 	backgroundBrush, inputBrush *walk.SolidColorBrush
@@ -53,9 +52,12 @@ type application struct {
 	modal      int // open modal dialogs
 	hiddenAt   time.Time
 	exiting    bool
-	clipSecret string // password on the clipboard, "" if none
-	clipGen    int    // identifies the latest copy, so older timers do nothing
-	dialog     *form  // open dialog, if any
+	clipSecret string      // password on the clipboard, "" if none
+	clipGen    int         // identifies the latest copy, so older timers do nothing
+	dialog     *form       // open dialog, if any
+	copied     vault.Entry // entry whose login shows copiedNotice, if showCopied
+	showCopied bool
+	copiedGen  int
 }
 
 type entryModel struct {
@@ -78,7 +80,6 @@ func (m *entryModel) Value(row, col int) any {
 
 func (a *application) createWindow() error {
 	a.model = &entryModel{}
-	var copyPassword, add *walk.PushButton
 	err := MainWindow{
 		AssignTo: &a.mw,
 		Visible:  false,
@@ -91,7 +92,7 @@ func (a *application) createWindow() error {
 				Layout: HBox{MarginsZero: true, Spacing: 6},
 				Children: []Widget{
 					LineEdit{AssignTo: &a.search, CueBanner: "Search…", OnTextChanged: a.searchChanged},
-					PushButton{AssignTo: &add, Text: "+", MaxSize: Size{Width: 32}, ToolTipText: "Add", OnClicked: a.addEntry},
+					PushButton{AssignTo: &a.addButton, Text: "+", MaxSize: Size{Width: 32}, ToolTipText: "Add", OnClicked: a.addEntry},
 				},
 			},
 			TableView{
@@ -105,21 +106,14 @@ func (a *application) createWindow() error {
 					{Title: "Login", Width: 100},
 					{Title: "Password"},
 				},
-				OnItemActivated: a.copyPassword,
-			},
-			Composite{
-				Layout: HBox{MarginsZero: true, Spacing: 6},
-				Children: []Widget{
-					PushButton{AssignTo: &a.copyLogin, Text: loginButtonText, OnClicked: a.copyUsername},
-					PushButton{AssignTo: &copyPassword, Text: "Password", OnClicked: a.copyPassword},
-				},
+				OnItemActivated: a.cellClicked,
 			},
 		},
 	}.Create()
 	if err != nil {
 		return err
 	}
-	a.buttons = []*walk.PushButton{a.copyLogin, copyPassword, add}
+	enableSingleClick(a.table.Handle())
 	// walk always creates a toolbar. Empty, it reserves no space but is still
 	// stretched across the top of the window, covering the search box. It has to
 	// be removed: SetVisible(false) is a no-op while the window itself is hidden.
@@ -365,6 +359,18 @@ func (a *application) selected() *vault.Entry {
 	return &a.model.rows[i]
 }
 
+// cellClicked copies the clicked value. The list sits in single-click mode, so
+// this runs once the mouse button is released: a popup hidden any earlier would
+// send the release to the application underneath.
+func (a *application) cellClicked() {
+	switch clickedColumn(a.table.Handle()) {
+	case loginColumn:
+		a.copyUsername()
+	case passwordColumn:
+		a.copyPassword()
+	}
+}
+
 func (a *application) copyPassword() {
 	e := a.selected()
 	if e == nil {
@@ -397,9 +403,17 @@ func (a *application) copyUsername() {
 		return
 	}
 	// The popup stays open so the password can be copied next.
-	a.copyLogin.SetText("Copied ✓")
+	a.copied, a.showCopied = *e, true
+	a.copiedGen++
+	generation := a.copiedGen
+	a.table.Invalidate()
 	time.AfterFunc(1500*time.Millisecond, func() {
-		a.mw.Synchronize(func() { a.copyLogin.SetText(loginButtonText) })
+		a.mw.Synchronize(func() {
+			if a.copiedGen == generation {
+				a.showCopied = false
+				a.table.Invalidate()
+			}
+		})
 	})
 }
 
@@ -421,7 +435,7 @@ func (a *application) OnPreTranslate(msg *win.MSG) bool {
 	case key == walk.KeyEscape:
 		a.hide()
 	case key == walk.KeyReturn:
-		if slices.ContainsFunc(a.buttons, func(b *walk.PushButton) bool { return b.Handle() == msg.HWnd }) {
+		if msg.HWnd == a.addButton.Handle() {
 			return false
 		}
 		a.copyPassword()

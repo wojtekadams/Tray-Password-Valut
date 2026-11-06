@@ -18,8 +18,8 @@ and no runtime to install.
 | --- | --- |
 | Typing | Filters by name and username |
 | Up / Down | Selects an entry |
-| Enter, double-click, **Password** button | Copies the password and hides the popup |
-| Ctrl+U, **Login** button | Copies the username and keeps the popup open |
+| Clicking a password, Enter | Copies the password and hides the popup |
+| Clicking a login, Ctrl+U | Copies the username and keeps the popup open |
 | Ctrl+N, **+** button | Adds an entry (name, username, password) |
 | Esc, clicking outside | Hides the popup |
 

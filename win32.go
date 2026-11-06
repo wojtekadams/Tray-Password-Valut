@@ -189,6 +189,31 @@ func openClipboard(hwnd win.HWND) error {
 	return errors.New("clipboard is in use by another application")
 }
 
+// enableSingleClick makes the lists inside a TableView activate items on one
+// click, which also shows a hand cursor over them.
+func enableSingleClick(table win.HWND) {
+	for _, list := range listViews(table) {
+		win.SendMessage(list, win.LVM_SETEXTENDEDLISTVIEWSTYLE,
+			win.LVS_EX_ONECLICKACTIVATE, win.LVS_EX_ONECLICKACTIVATE)
+	}
+}
+
+// clickedColumn returns the column under the cursor, or -1. walk's activation
+// event only tells the row.
+func clickedColumn(table win.HWND) int {
+	var cursor win.POINT
+	win.GetCursorPos(&cursor)
+	for _, list := range listViews(table) {
+		hit := win.LVHITTESTINFO{Pt: cursor}
+		win.ScreenToClient(list, &hit.Pt)
+		win.SendMessage(list, win.LVM_SUBITEMHITTEST, 0, uintptr(unsafe.Pointer(&hit)))
+		if hit.IItem >= 0 {
+			return int(hit.ISubItem)
+		}
+	}
+	return -1
+}
+
 // monitorUnderCursor returns the bounds of the monitor the cursor is on.
 func monitorUnderCursor() (monitor, work placement.Rect, ok bool) {
 	var cursor win.POINT

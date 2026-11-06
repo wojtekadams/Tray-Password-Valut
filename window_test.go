@@ -10,19 +10,23 @@ import (
 
 	"github.com/tailscale/walk"
 	"github.com/tailscale/win"
-	"golang.org/x/sys/windows"
 
 	"github.com/wojtekadams/Tray-Password-Valut/internal/theme"
 	"github.com/wojtekadams/Tray-Password-Valut/internal/vault"
 )
 
 var (
-	procWindowFromPoint = windows.NewLazySystemDLL("user32.dll").NewProc("WindowFromPoint")
+	procWindowFromPoint = user32.NewProc("WindowFromPoint")
+	procSetCursorPos    = user32.NewProc("SetCursorPos")
+	procMouseEvent      = user32.NewProc("mouse_event")
 
 	coveredControls []string // results of checkPopup
 	wrongColors     []string
+	clickProblems   []string
 	popupError      error
 )
+
+const mouseLeftDown, mouseLeftUp = 0x0002, 0x0004
 
 // TestMain opens the popup first because walk only runs on the main goroutine,
 // which is the one running TestMain and not the tests themselves.
@@ -37,6 +41,15 @@ func TestPopupControlsAreNotCovered(t *testing.T) {
 		t.Fatal(popupError)
 	}
 	for _, problem := range coveredControls {
+		t.Error(problem)
+	}
+}
+
+func TestClickingACellCopiesIt(t *testing.T) {
+	if popupError != nil {
+		t.Fatal(popupError)
+	}
+	for _, problem := range clickProblems {
 		t.Error(problem)
 	}
 }
@@ -72,8 +85,7 @@ func checkPopup() error {
 		a.mw.Synchronize(func() {
 			for name, control := range map[string]win.HWND{
 				"search": a.search.Handle(),
-				"add":    a.buttons[len(a.buttons)-1].Handle(),
-				"login":  a.copyLogin.Handle(),
+				"add":    a.addButton.Handle(),
 			} {
 				if got := windowAtCenter(control); got != control {
 					coveredControls = append(coveredControls, fmt.Sprintf("%s is covered by window %#x", name, got))
@@ -85,6 +97,7 @@ func checkPopup() error {
 			time.Sleep(time.Second)
 			a.mw.Synchronize(func() { checkColors(a, p) })
 		}
+		clickChecks(a)
 		a.mw.Synchronize(func() {
 			a.exiting = true
 			app.Exit(0)
@@ -92,6 +105,43 @@ func checkPopup() error {
 	}()
 	app.Run()
 	return nil
+}
+
+// clickChecks clicks the real mouse on the login and password cells.
+func clickChecks(a *application) {
+	for _, step := range []struct {
+		name        string
+		column      int // left edge of a spot inside the cell, at 100% scaling
+		wantClip    string
+		wantVisible bool
+	}{
+		{"login", 170, "bob", true},
+		{"password", 270, "secret-password", false},
+	} {
+		a.mw.Synchronize(func() {
+			var rc win.RECT
+			win.GetWindowRect(a.table.Handle(), &rc)
+			procSetCursorPos.Call(uintptr(rc.Left)+uintptr(a.table.IntFrom96DPI(step.column)),
+				uintptr(rc.Top)+uintptr(a.table.IntFrom96DPI(10)))
+		})
+		time.Sleep(300 * time.Millisecond)
+		procMouseEvent.Call(mouseLeftDown, 0, 0, 0, 0)
+		procMouseEvent.Call(mouseLeftUp, 0, 0, 0, 0)
+		time.Sleep(700 * time.Millisecond)
+		a.mw.Synchronize(func() {
+			if err := openClipboard(a.mw.Handle()); err != nil {
+				clickProblems = append(clickProblems, err.Error())
+				return
+			}
+			defer win.CloseClipboard()
+			if got := clipboardText(); got != step.wantClip {
+				clickProblems = append(clickProblems, fmt.Sprintf("%s click: clipboard %q, want %q", step.name, got, step.wantClip))
+			}
+			if got := a.mw.Visible(); got != step.wantVisible {
+				clickProblems = append(clickProblems, fmt.Sprintf("%s click: popup visible = %v", step.name, got))
+			}
+		})
+	}
 }
 
 // checkColors reads real pixels off the screen, in places free of text.
