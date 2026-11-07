@@ -242,20 +242,21 @@ func enableSingleClick(table win.HWND) {
 	}
 }
 
-// clickedColumn returns the column under the cursor, or -1. walk's activation
-// event only tells the row.
-func clickedColumn(table win.HWND) int {
+// cursorInRow returns the cursor's distance from the left edge of the list,
+// if it is over a row. walk's activation event only tells the row, not where
+// in it the click was.
+func cursorInRow(lists []win.HWND) (x int, ok bool) {
 	var cursor win.POINT
 	win.GetCursorPos(&cursor)
-	for _, list := range listViews(table) {
+	for _, list := range lists {
 		hit := win.LVHITTESTINFO{Pt: cursor}
 		win.ScreenToClient(list, &hit.Pt)
 		win.SendMessage(list, win.LVM_SUBITEMHITTEST, 0, uintptr(unsafe.Pointer(&hit)))
 		if hit.IItem >= 0 {
-			return int(hit.ISubItem)
+			return int(hit.Pt.X), true
 		}
 	}
-	return -1
+	return 0, false
 }
 
 // monitorUnderCursor returns the bounds of the monitor the cursor is on.

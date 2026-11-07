@@ -36,6 +36,7 @@ func TestContrast(t *testing.T) {
 			"text on selection":    {[2]Color{p.Text, p.Selection}, 4.5},
 			"error on background":  {[2]Color{p.Error, p.Background}, 4.5},
 			"marker on selection":  {[2]Color{p.Accent, p.Selection}, 3},
+			"underline on input":   {[2]Color{p.Accent, p.Input}, 3},
 		} {
 			if got := contrast(check.pair[0], check.pair[1]); got < check.min {
 				t.Errorf("dark=%v: %s contrast %.2f, want at least %.1f", dark, name, got, check.min)
