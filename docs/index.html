@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tray Password Vault</title>
+<meta name="description" content="A small password manager for Windows 11 that lives in the system tray and uses KeePass files.">
+<link rel="icon" href="logo.jpg">
+<style>
+  :root {
+    --bg: #131923;
+    --surface: #1a212d;
+    --surface-2: #222b3a;
+    --border: #2c3647;
+    --text: #e7eaf0;
+    --muted: #9aa5b5;
+    --blue: #2c4f9e;
+    --yellow: #f5c518;
+    --on-yellow: #1a1400;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.6 "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  a { color: var(--yellow); }
+  main { max-width: 880px; margin: 0 auto; padding: 0 16px; }
+
+  /* Hero */
+  .hero {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 32px;
+    align-items: center;
+    padding: 72px 0 48px;
+  }
+  .hero img { width: 168px; height: 168px; border-radius: 24px; }
+  h1 {
+    font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+    font-size: clamp(2.1rem, 6vw, 3rem);
+    line-height: 1.1;
+    margin: 0 0 12px;
+    letter-spacing: -0.02em;
+  }
+  .lead { font-size: 1.15rem; color: var(--muted); margin: 0 0 28px; max-width: 34em; }
+  .actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .button {
+    display: inline-block;
+    padding: 12px 22px;
+    border-radius: 8px;
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .button.primary { background: var(--yellow); color: var(--on-yellow); }
+  .button.primary:hover { background: #ffd43b; }
+  .button.secondary { color: var(--text); border: 1px solid var(--border); }
+  .button.secondary:hover { background: var(--surface); }
+  .meta { color: var(--muted); font-size: 0.875rem; margin-top: 14px; }
+
+  /* Popup mock-up */
+  .preview { display: flex; justify-content: center; padding: 8px 0 64px; }
+  .popup {
+    width: 100%;
+    max-width: 380px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+    font: 14px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  }
+  .popup .bar { display: flex; gap: 6px; margin-bottom: 8px; }
+  .popup .search, .popup .add {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-bottom: 2px solid var(--yellow);
+    border-radius: 4px;
+    padding: 6px 10px;
+  }
+  .popup .search { flex: 1; color: var(--text); }
+  .popup .add { border-bottom-color: var(--border); width: 34px; text-align: center; }
+  .popup .row { display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 8px; padding: 6px 10px; border-radius: 4px; }
+  .popup .row span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .popup .row .pass { color: var(--muted); }
+  .popup .row.selected { background: var(--blue); }
+  .popup .row.selected .pass { color: var(--text); }
+
+  /* Sections */
+  section { padding: 0 0 56px; }
+  h2 { font-size: 1.4rem; margin: 0 0 20px; letter-spacing: -0.01em; }
+  .features { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  .feature {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+  }
+  .feature h3 { margin: 0 0 6px; font-size: 1.05rem; }
+  .feature p { margin: 0; color: var(--muted); }
+
+  ol.steps { margin: 0; padding-left: 1.3em; }
+  ol.steps li { margin-bottom: 8px; }
+  ol.steps li::marker { color: var(--yellow); font-weight: 600; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 0.875rem; }
+  kbd {
+    font: 0.85em/1 ui-monospace, "Cascadia Mono", Consolas, monospace;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    padding: 3px 6px;
+    white-space: nowrap;
+  }
+
+  code { font: 0.9em ui-monospace, "Cascadia Mono", Consolas, monospace; color: var(--text); }
+
+  ul.notes { margin: 0; padding-left: 1.2em; color: var(--muted); }
+  ul.notes li { margin-bottom: 6px; }
+
+  footer {
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 0.875rem;
+    padding: 24px 0 40px;
+  }
+
+  @media (max-width: 640px) {
+    .hero { grid-template-columns: 1fr; padding-top: 40px; gap: 20px; }
+    .hero img { width: 112px; height: 112px; order: -1; }
+    .features { grid-template-columns: 1fr; }
+    th, td { padding: 8px 6px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header class="hero">
+    <div>
+      <h1>Tray Password Vault</h1>
+      <p class="lead">Your KeePass passwords, one shortcut away. A small password manager
+        for Windows&nbsp;11 that lives in the system tray.</p>
+      <div class="actions">
+        <a class="button primary" href="https://github.com/wojtekadams/Tray-Password-Valut/releases/latest/download/TrayPasswordVault.zip">Download for Windows</a>
+        <a class="button secondary" href="https://github.com/wojtekadams/Tray-Password-Valut">View on GitHub</a>
+      </div>
+      <p class="meta">Free and open source · MIT license · single exe, no installer</p>
+    </div>
+    <img src="logo.jpg" alt="Tray Password Vault logo: a padlock with a key">
+  </header>
+
+  <div class="preview" aria-hidden="true">
+    <div class="popup">
+      <div class="bar"><div class="search">git</div><div class="add">+</div></div>
+      <div class="row selected"><span>GitHub</span><span>wojtek</span><span class="pass">Copied ✓</span></div>
+      <div class="row"><span>GitLab</span><span>wojtek</span><span class="pass">x7k•••••</span></div>
+      <div class="row"><span>Gitea at home</span><span>admin</span><span class="pass">Qp2•••••</span></div>
+    </div>
+  </div>
+
+  <section>
+    <h2>What it does</h2>
+    <div class="features">
+      <div class="feature">
+        <h3>Always one shortcut away</h3>
+        <p>Press <kbd>Win</kbd>+<kbd>W</kbd> (or your own shortcut), type a few letters, press Enter.
+          The password is on your clipboard.</p>
+      </div>
+      <div class="feature">
+        <h3>Works with KeePass files</h3>
+        <p>Uses standard <code>.kdbx</code> databases, so the same file still opens in KeePass and KeePassXC.</p>
+      </div>
+      <div class="feature">
+        <h3>Clipboard that cleans up</h3>
+        <p>Copied passwords are removed after 30&nbsp;seconds and kept out of clipboard history.</p>
+      </div>
+      <div class="feature">
+        <h3>Locks with your PC</h3>
+        <p>The vault locks when you lock the screen or the computer goes to sleep.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Getting started</h2>
+    <ol class="steps">
+      <li>Download the zip, unpack it and run <code>TrayPasswordVault.exe</code>.</li>
+      <li>Pick your existing <code>.kdbx</code> database or create a new one.</li>
+      <li>From now on the app starts with Windows and asks for the password once.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Shortcuts</h2>
+    <table>
+      <thead><tr><th>Input</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td>Typing</td><td>Search by name or login</td></tr>
+        <tr><td><kbd>Enter</kbd> or click the password</td><td>Copy the password</td></tr>
+        <tr><td><kbd>Ctrl</kbd>+<kbd>U</kbd> or click the login</td><td>Copy the login</td></tr>
+        <tr><td><kbd>Ctrl</kbd>+<kbd>N</kbd> or <b>+</b></td><td>Add an entry</td></tr>
+        <tr><td><kbd>Esc</kbd></td><td>Hide</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Good to know</h2>
+    <ul class="notes">
+      <li>Supports KDBX 3.1 to 4.1. Databases that need a key file or hardware key are not supported.</li>
+      <li>Every save keeps the previous file as <code>&lt;database&gt;.kdbx.bak</code>.</li>
+      <li>The exe is not signed, so Windows SmartScreen may warn on first launch.</li>
+    </ul>
+  </section>
+
+  <footer>
+    Tray Password Vault ·
+    <a href="https://github.com/wojtekadams/Tray-Password-Valut">Source on GitHub</a> ·
+    <a href="https://github.com/wojtekadams/Tray-Password-Valut/blob/main/LICENSE">MIT license</a>
+  </footer>
+</main>
+</body>
+</html>
