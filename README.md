@@ -1,6 +1,6 @@
 # Tray Password Vault
 
-<img src="logo.jpg" alt="Tray Password Vault logo" width="128">
+<img src="logo.png" alt="Tray Password Vault logo" width="128">
 
 A password manager for Windows 11 that lives in the system tray and uses KeePass
 (`.kdbx`) files. Download `TrayPasswordVault.zip` from Releases and run the exe.
