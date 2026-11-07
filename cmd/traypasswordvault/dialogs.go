@@ -84,7 +84,7 @@ func (a *application) exec(d Dialog, f *form, focus func() walk.Widget) bool {
 		a.errorBox(err)
 		return false
 	}
-	f.dlg.SetBackground(a.backgroundBrush)
+	f.dlg.SetBackground(a.brushes.background)
 	setDarkTitle(f.dlg.Handle(), a.palette.Dark)
 	a.themeChildren(f.dlg)
 	f.status.SetTextColor(walkColor(a.palette.Error))

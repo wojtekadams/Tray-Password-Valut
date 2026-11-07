@@ -22,8 +22,21 @@ const (
 
 	copiedNotice = "Copied ✓"
 
-	// Popup size in pixels at 100% scaling.
-	popupWidth, popupHeight, popupMargin = 340, 180, 12
+	// Popup size in pixels at 100% scaling: room for the search box and five rows.
+	popupWidth, popupHeight, popupMargin = 380, 213, 12
+
+	// Sizes at 100% scaling, matching the mock-up on the project's web page.
+	padding    = 10 // inside the popup
+	searchEdit = 20 // height of the text field inside the search box
+	searchLine = 2  // underline of the search box
+	// The search box: top border, padding, text, padding, underline.
+	searchHeight = 1 + 7 + searchEdit + 5 + searchLine
+	buttonWidth  = 34
+	rowHeight    = 30
+	columnGap    = 8
+
+	columnSeparator = 2 // pixels the list theme draws at the end of a column
+	cornerSize      = 8 // diameter of rounded corners
 
 	loginColumn, passwordColumn = 1, 2
 )
@@ -35,17 +48,23 @@ type application struct {
 	cfg   config
 	vault *vault.Vault // nil while locked
 
-	mw        *walk.MainWindow
-	search    *walk.LineEdit
-	table     *walk.TableView
-	addButton *walk.PushButton
+	mw           *walk.MainWindow
+	search       *walk.LineEdit
+	searchFrame  *walk.Composite // the search box, showing as its underline
+	searchBorder *walk.Composite // its outline
+	searchInner  *walk.Composite // its padding around the text field
+	table        *walk.TableView
+	addButton    *walk.CustomWidget
+	lists        []win.HWND     // the native lists inside table
+	rowImages    win.HIMAGELIST // sets the row height
+	rowPixels    int
 
 	hotkeys      *hotkeyListener
 	activeHotkey string
 
-	palette                     theme.Palette
-	backgroundBrush, inputBrush *walk.SolidColorBrush
-	model                       *entryModel
+	palette theme.Palette
+	brushes brushes
+	model   *entryModel
 
 	tray       *walk.NotifyIcon
 	lockAction *walk.Action
@@ -89,26 +108,69 @@ func (a *application) createWindow() error {
 		Title:    title,
 		Font:     uiFont(),
 		Size:     Size{Width: popupWidth, Height: popupHeight},
-		Layout:   VBox{Margins: Margins{Left: 8, Top: 8, Right: 8, Bottom: 8}, Spacing: 6},
+		Layout:   VBox{Margins: Margins{Left: padding, Top: padding, Right: padding, Bottom: padding}, Spacing: 8},
 		Children: []Widget{
 			Composite{
-				Layout: HBox{MarginsZero: true, Spacing: 6},
+				MinSize: Size{Height: searchHeight},
+				MaxSize: Size{Height: searchHeight},
+				Layout:  HBox{MarginsZero: true, Spacing: 6},
 				Children: []Widget{
-					LineEdit{AssignTo: &a.search, CueBanner: "Search…", OnTextChanged: a.searchChanged},
-					PushButton{AssignTo: &a.addButton, Text: "+", MaxSize: Size{Width: 32}, ToolTipText: "Add", OnClicked: a.addEntry},
+					// The search box is drawn from nested coloured composites,
+					// as the native frame of a text box cannot be recoloured:
+					// the underline shows below the outline, which surrounds
+					// the padding around the text field.
+					Composite{
+						AssignTo: &a.searchFrame,
+						// The button is greedy too; without this the two would
+						// split the row and the button would leave its half empty.
+						StretchFactor: 100,
+						Layout:        VBox{Margins: Margins{Bottom: searchLine}},
+						Children: []Widget{
+							Composite{
+								AssignTo: &a.searchBorder,
+								Layout:   VBox{Margins: Margins{Left: 1, Top: 1, Right: 1}},
+								Children: []Widget{
+									Composite{
+										AssignTo: &a.searchInner,
+										Layout:   HBox{Margins: Margins{Left: 9, Top: 7, Right: 9, Bottom: 5}},
+										Children: []Widget{
+											LineEdit{
+												AssignTo:      &a.search,
+												CueBanner:     "Search…",
+												MinSize:       Size{Height: searchEdit},
+												MaxSize:       Size{Height: searchEdit},
+												OnTextChanged: a.searchChanged,
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+					CustomWidget{
+						AssignTo:            &a.addButton,
+						MinSize:             Size{Width: buttonWidth},
+						MaxSize:             Size{Width: buttonWidth},
+						ClearsBackground:    true,
+						InvalidatesOnResize: true,
+						PaintPixels:         a.paintAddButton,
+						ToolTipText:         "Add (Ctrl+N)",
+						OnMouseUp: func(_, _ int, button walk.MouseButton) {
+							if button == walk.LeftButton {
+								a.addEntry()
+							}
+						},
+					},
 				},
 			},
 			TableView{
-				AssignTo:            &a.table,
-				Model:               a.model,
-				HeaderHidden:        true,
-				StyleCell:           a.styleCell,
-				LastColumnStretched: true,
-				Columns: []TableViewColumn{
-					{Title: "Name", Width: 120},
-					{Title: "Login", Width: 100},
-					{Title: "Password"},
-				},
+				AssignTo:      &a.table,
+				StretchFactor: 100, // the search row is greedy too, but has a fixed height
+				Model:         a.model,
+				HeaderHidden:  true,
+				StyleCell:     a.styleCell,
+				// One column: styleCell draws the name, login and password.
+				Columns:         []TableViewColumn{{Title: "Name"}},
 				OnItemActivated: a.cellClicked,
 			},
 		},
@@ -116,7 +178,15 @@ func (a *application) createWindow() error {
 	if err != nil {
 		return err
 	}
+	a.lists = listViews(a.table.Handle())
 	enableSingleClick(a.table.Handle())
+	a.table.SetScrollbarOrientation(walk.Vertical)
+	a.table.SizeChanged().Attach(a.fitColumn)
+	removeBorder(a.search.Handle())
+	a.search.FocusedChanged().Attach(a.paintSearchLine)
+	a.searchFrame.SizeChanged().Attach(func() {
+		roundCorners(a.searchFrame.Handle(), int32(a.searchFrame.IntFrom96DPI(cornerSize)))
+	})
 	// walk always creates a toolbar. Empty, it reserves no space but is still
 	// stretched across the top of the window, covering the search box. It has to
 	// be removed: SetVisible(false) is a no-op while the window itself is hidden.
@@ -125,6 +195,10 @@ func (a *application) createWindow() error {
 	toolBar.Dispose()
 	makePopup(a.mw.Handle())
 	removeBorder(a.table.Handle())
+	for _, list := range a.lists {
+		removeBorder(list)
+	}
+	a.updateRowHeight()
 	a.applyPalette(systemPalette())
 
 	if icon := appIcon(); icon != nil {
@@ -256,6 +330,53 @@ func (a *application) show() {
 func (a *application) placePopup() {
 	scale := func(v int) int32 { return int32(a.mw.IntFrom96DPI(v)) }
 	placeAboveTray(a.mw.Handle(), scale(popupWidth), scale(popupHeight), scale(popupMargin))
+	a.updateRowHeight() // the popup may have moved to a monitor with other scaling
+}
+
+// updateRowHeight makes the list rows as tall as on the web page. A list view
+// takes its row height from its image list, so it gets an empty one.
+func (a *application) updateRowHeight() {
+	height := a.table.IntFrom96DPI(rowHeight)
+	if height == a.rowPixels {
+		return
+	}
+	images := win.ImageList_Create(1, int32(height), win.ILC_COLOR32, 0, 0)
+	if images == 0 {
+		return
+	}
+	for _, list := range a.lists {
+		win.SendMessage(list, win.LVM_SETIMAGELIST, win.LVSIL_SMALL, uintptr(images))
+	}
+	if a.rowImages != 0 {
+		win.ImageList_Destroy(a.rowImages)
+	}
+	a.rowImages, a.rowPixels = images, height
+}
+
+// fitColumn makes the list's only column fill the list. The Windows 11 theme
+// draws a separator in the last two pixels of a column, so the column reaches
+// that far past the list's edge, out of sight. There is no horizontal scroll
+// bar to reveal it.
+func (a *application) fitColumn() {
+	for _, list := range a.lists {
+		// walk's list for frozen columns has no width and stays alone.
+		var rc win.RECT
+		if win.GetClientRect(list, &rc) && rc.Right > 0 {
+			win.SendMessage(list, win.LVM_SETCOLUMNWIDTH, 0, uintptr(rc.Right+columnSeparator))
+		}
+	}
+}
+
+// listWidth returns the width of the visible part of the list, in pixels.
+func (a *application) listWidth() int {
+	width := 0
+	for _, list := range a.lists {
+		var rc win.RECT
+		if win.GetClientRect(list, &rc) {
+			width = max(width, int(rc.Right))
+		}
+	}
+	return width
 }
 
 // reload picks up changes made by KeePass or a sync client.
@@ -340,6 +461,7 @@ func (a *application) refresh() {
 	})
 	a.model.rows = rows
 	a.model.PublishRowsReset()
+	a.fitColumn() // the scroll bar may have come or gone
 	if len(rows) > 0 {
 		a.table.SetCurrentIndex(max(slices.Index(rows, previous), 0))
 	}
@@ -362,7 +484,12 @@ func (a *application) selected() *vault.Entry {
 
 // cellClicked copies the clicked value.
 func (a *application) cellClicked() {
-	switch clickedColumn(a.table.Handle()) {
+	x, ok := cursorInRow(a.lists)
+	if !ok {
+		return
+	}
+	px := a.table.IntFrom96DPI
+	switch columnAt(x, columnsOf(a.listWidth(), px(padding), px(columnGap))) {
 	case loginColumn:
 		a.copyUsername()
 	case passwordColumn:
@@ -450,9 +577,6 @@ func (a *application) OnPreTranslate(msg *win.MSG) bool {
 	case key == walk.KeyEscape:
 		a.hide()
 	case key == walk.KeyReturn:
-		if msg.HWnd == a.addButton.Handle() {
-			return false
-		}
 		a.copyPassword()
 	case (key == walk.KeyDown || key == walk.KeyUp) && msg.HWnd == a.search.Handle():
 		delta := 1
