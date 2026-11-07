@@ -36,7 +36,7 @@ jobs:
       - name: Generate Windows resources (icon, manifest)
         run: |
           go install github.com/tc-hib/go-winres@${{ env.GO_WINRES_VERSION }}
-          go-winres make --arch amd64
+          go-winres make --arch amd64 --out cmd/traypasswordvault/rsrc
 
       # After the resources: the window test needs the manifest.
       - name: Test
@@ -45,7 +45,7 @@ jobs:
       - name: Build
         env:
           CGO_ENABLED: "0"
-        run: go build -trimpath -ldflags "-H=windowsgui -s -w" -o TrayPasswordVault.exe .
+        run: go build -trimpath -ldflags "-H=windowsgui -s -w" -o TrayPasswordVault.exe ./cmd/traypasswordvault
 
       - name: Smoke test (the app must start and stay running)
         shell: pwsh

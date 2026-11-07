@@ -407,18 +407,29 @@ func (a *application) copyUsername() {
 // notifyCopied briefly replaces the copied cell's text with copiedNotice. The
 // popup stays open so that the other value can be copied next.
 func (a *application) notifyCopied(e *vault.Entry, column int) {
+	if a.showCopied {
+		a.redrawRow(a.copied) // the previous notice, if still shown
+	}
 	a.copied, a.copiedColumn, a.showCopied = *e, column, true
 	a.copiedGen++
 	generation := a.copiedGen
-	a.table.Invalidate()
+	a.redrawRow(a.copied)
 	time.AfterFunc(1500*time.Millisecond, func() {
 		a.mw.Synchronize(func() {
 			if a.copiedGen == generation {
 				a.showCopied = false
-				a.table.Invalidate()
+				a.redrawRow(a.copied)
 			}
 		})
 	})
+}
+
+// redrawRow repaints only the row showing e. Invalidating the whole table
+// erases its background first, which makes the list flicker.
+func (a *application) redrawRow(e vault.Entry) {
+	if i := slices.Index(a.model.rows, e); i >= 0 {
+		a.model.PublishRowChanged(i)
+	}
 }
 
 func (a *application) wipeClipboard() {
