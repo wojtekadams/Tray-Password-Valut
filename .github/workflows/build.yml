@@ -63,14 +63,25 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: TrayPasswordVault
-          path: |
-            TrayPasswordVault.exe
-            TrayPasswordVault.zip
+          path: TrayPasswordVault.zip
           if-no-files-found: error
+
+  # Scans what users actually download. The stable image bundles current signatures,
+  # so it is deliberately not pinned to a digest.
+  antivirus:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: TrayPasswordVault
+      - run: unzip TrayPasswordVault.zip -d unpacked
+      - name: Scan with ClamAV
+        run: docker run --rm --mount "type=bind,source=$PWD,target=/scan,readonly" clamav/clamav:stable clamscan --recursive --infected /scan
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, keepassxc-interop]
+    needs: [build, keepassxc-interop, antivirus]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -80,4 +91,4 @@ jobs:
           name: TrayPasswordVault
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" TrayPasswordVault.exe TrayPasswordVault.zip --repo "$GITHUB_REPOSITORY" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" TrayPasswordVault.zip --repo "$GITHUB_REPOSITORY" --generate-notes

@@ -61,8 +61,8 @@ you can try another. It is saved in `%APPDATA%\TrayPasswordVault\config.json`.
 - Passwords and a hash of the master password stay in process memory while the
   database is unlocked, and Go offers no reliable way to wipe them. The tray menu's **Lock** option
   releases the references, but does not guarantee they leave RAM immediately.
-- The vault locks itself when the screen locks, when the system sleeps, and after 15
-  minutes without keyboard or mouse input. The password is asked for again on next use.
+- The vault locks itself when the screen locks and when the system sleeps. The password
+  is asked for again on next use.
 - New databases use Argon2 with 64 MiB of memory and 30 iterations, and require a master
   password of at least 12 characters.
 - Saving also upgrades a database that still has the settings earlier versions of this
@@ -75,7 +75,7 @@ you can try another. It is saved in `%APPDATA%\TrayPasswordVault\config.json`.
 
 GitHub Actions builds the exe and packs it with the license into `TrayPasswordVault.zip`:
 every push produces a `TrayPasswordVault` artifact, and a `v*` tag creates a Release with
-both files. To build locally (also works from macOS or Linux):
+the zip. To build locally (also works from macOS or Linux):
 
 ```sh
 go install github.com/tc-hib/go-winres@latest

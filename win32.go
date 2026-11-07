@@ -44,9 +44,7 @@ var (
 	procRegisterClipboardFmt = user32.NewProc("RegisterClipboardFormatW")
 	procMonitorFromPoint     = user32.NewProc("MonitorFromPoint")
 
-	procGetLastInputInfo = user32.NewProc("GetLastInputInfo")
-	procGetTickCount     = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetTickCount")
-	procWTSRegister      = windows.NewLazySystemDLL("wtsapi32.dll").NewProc("WTSRegisterSessionNotification")
+	procWTSRegister = windows.NewLazySystemDLL("wtsapi32.dll").NewProc("WTSRegisterSessionNotification")
 
 	procDwmSetWindowAttribute = windows.NewLazySystemDLL("dwmapi.dll").NewProc("DwmSetWindowAttribute")
 )
@@ -330,19 +328,6 @@ func watchSession(hwnd win.HWND, onLock func()) error {
 	})
 	win.SetWindowLongPtr(hwnd, win.GWLP_WNDPROC, proc)
 	return nil
-}
-
-// idleTime returns how long ago the user last touched the keyboard or mouse.
-func idleTime() time.Duration {
-	info := struct {
-		size uint32
-		time uint32
-	}{size: 8}
-	if ok, _, _ := procGetLastInputInfo.Call(uintptr(unsafe.Pointer(&info))); ok == 0 {
-		return 0
-	}
-	now, _, _ := procGetTickCount.Call()
-	return time.Duration(uint32(now)-info.time) * time.Millisecond
 }
 
 func autostartEnabled() bool {

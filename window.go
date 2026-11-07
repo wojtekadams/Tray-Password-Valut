@@ -19,7 +19,6 @@ import (
 const (
 	title          = "Tray Password Vault"
 	clipboardClear = 30 * time.Second
-	autoLockAfter  = 15 * time.Minute
 
 	copiedNotice = "Copied ✓"
 
@@ -299,8 +298,7 @@ func (a *application) lock() {
 	}
 }
 
-// startAutoLock locks the vault when the session locks, the system sleeps or
-// the user has been idle for autoLockAfter.
+// startAutoLock locks the vault when the session locks or the system sleeps.
 func (a *application) startAutoLock() {
 	autoLock := func() {
 		a.mw.Synchronize(func() {
@@ -312,13 +310,6 @@ func (a *application) startAutoLock() {
 	if err := watchSession(a.mw.Handle(), autoLock); err != nil {
 		a.tray.ShowWarning(title, "Auto-lock on screen lock is unavailable: "+err.Error())
 	}
-	go func() {
-		for range time.Tick(30 * time.Second) {
-			if idleTime() >= autoLockAfter {
-				autoLock()
-			}
-		}
-	}()
 }
 
 func (a *application) exit() {
