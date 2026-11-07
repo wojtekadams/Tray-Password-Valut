@@ -1,12 +1,16 @@
-// Package theme defines the application's Windows 11 style colours. It has no
-// Windows dependencies, so the palettes can be tested on any platform.
+// Package theme defines the application's colours, taken from the logo: navy
+// and yellow. It has no Windows dependencies, so the palettes can be tested on
+// any platform.
 package theme
 
 // Color is an sRGB colour.
 type Color struct{ R, G, B uint8 }
 
-// DefaultAccent is the Windows 11 default accent colour.
-var DefaultAccent = Color{0x00, 0x67, 0xC0}
+// Logo colours.
+var (
+	Navy   = Color{0x2C, 0x4F, 0x9E}
+	Yellow = Color{0xF5, 0xC5, 0x18}
+)
 
 // Palette holds the colours of one appearance.
 type Palette struct {
@@ -20,41 +24,28 @@ type Palette struct {
 	Error      Color
 }
 
-// New returns the palette for an appearance and accent colour. The selection
-// is only a tint of the accent, so text stays readable on any accent colour.
-func New(dark bool, accent Color) Palette {
+// New returns the palette for the light or dark Windows app mode.
+func New(dark bool) Palette {
 	if dark {
-		background := Color{0x20, 0x20, 0x20}
 		return Palette{
 			Dark:       true,
-			Background: background,
-			Input:      Color{0x2D, 0x2D, 0x2D},
-			Text:       Color{0xFF, 0xFF, 0xFF},
-			Subtle:     Color{0xC8, 0xC8, 0xC8},
-			Accent:     accent,
-			Selection:  Mix(background, accent, 0.25),
+			Background: Color{0x1A, 0x21, 0x2D},
+			Input:      Color{0x22, 0x2B, 0x3A},
+			Text:       Color{0xE7, 0xEA, 0xF0},
+			Subtle:     Color{0x9A, 0xA5, 0xB5},
+			Accent:     Yellow,
+			Selection:  Navy,
 			Error:      Color{0xFF, 0x99, 0xA4},
 		}
 	}
-	background := Color{0xF3, 0xF3, 0xF3}
+	// Yellow is unreadable on a light background, so navy takes its place.
 	return Palette{
-		Background: background,
+		Background: Color{0xF4, 0xF6, 0xFA},
 		Input:      Color{0xFF, 0xFF, 0xFF},
-		Text:       Color{0x1B, 0x1B, 0x1B},
-		Subtle:     Color{0x5C, 0x5C, 0x5C},
-		Accent:     accent,
-		Selection:  Mix(background, accent, 0.18),
+		Text:       Color{0x13, 0x19, 0x23},
+		Subtle:     Color{0x4F, 0x5B, 0x6D},
+		Accent:     Navy,
+		Selection:  Color{0xD6, 0xE0, 0xF5},
 		Error:      Color{0xC4, 0x2B, 0x1C},
 	}
-}
-
-// Mix returns a blended with b, t being the share of b.
-func Mix(a, b Color, t float64) Color {
-	channel := func(x, y uint8) uint8 { return uint8(float64(x) + (float64(y)-float64(x))*t + 0.5) }
-	return Color{channel(a.R, b.R), channel(a.G, b.G), channel(a.B, b.B)}
-}
-
-// FromABGR converts the 0xAABBGGRR value of the registry's AccentColor.
-func FromABGR(v uint32) Color {
-	return Color{uint8(v), uint8(v >> 8), uint8(v >> 16)}
 }

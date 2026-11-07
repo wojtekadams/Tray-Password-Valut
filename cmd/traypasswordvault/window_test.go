@@ -92,7 +92,7 @@ func checkPopup() error {
 				}
 			}
 		})
-		for _, p := range []theme.Palette{theme.New(true, theme.DefaultAccent), theme.New(false, theme.DefaultAccent)} {
+		for _, p := range []theme.Palette{theme.New(true), theme.New(false)} {
 			a.mw.Synchronize(func() { a.applyPalette(p) })
 			time.Sleep(time.Second)
 			a.mw.Synchronize(func() { checkColors(a, p) })

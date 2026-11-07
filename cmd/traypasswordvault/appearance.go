@@ -19,7 +19,6 @@ import (
 
 const (
 	personalizeKeyPath      = `Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`
-	dwmKeyPath              = `Software\Microsoft\Windows\DWM`
 	dwmUseImmersiveDarkMode = 20
 	firstDarkModeBuild      = 18362 // Windows 10 1903, where the ordinals below exist
 	appModeAllowDark        = 1
@@ -75,14 +74,10 @@ func registryDWORD(path, name string) (uint32, bool) {
 	return uint32(value), err == nil
 }
 
-// systemPalette returns the palette for the current Windows settings.
+// systemPalette returns the palette for the Windows light or dark app mode.
 func systemPalette() theme.Palette {
-	accent := theme.DefaultAccent
-	if value, ok := registryDWORD(dwmKeyPath, "AccentColor"); ok {
-		accent = theme.FromABGR(value)
-	}
 	light, ok := registryDWORD(personalizeKeyPath, "AppsUseLightTheme")
-	return theme.New(allowDarkModeForWindow != 0 && ok && light == 0, accent)
+	return theme.New(allowDarkModeForWindow != 0 && ok && light == 0)
 }
 
 func walkColor(c theme.Color) walk.Color { return walk.RGB(c.R, c.G, c.B) }
