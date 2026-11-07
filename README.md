@@ -5,6 +5,8 @@
 A password manager for Windows 11 that lives in the system tray and uses KeePass
 (`.kdbx`) files. Download `TrayPasswordVault.zip` from Releases and run the exe.
 
+Website: https://wojtekadams.github.io/Tray-Password-Valut/
+
 ## Usage
 
 On first run, pick or create a database. The app starts with Windows and asks for the
