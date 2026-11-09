@@ -66,8 +66,11 @@ func (f *form) run(work func() error) {
 }
 
 func errorText(err error) string {
-	if errors.Is(err, vault.ErrWrongPassword) {
+	switch {
+	case errors.Is(err, vault.ErrWrongPassword):
 		return "Wrong password."
+	case errors.Is(err, vault.ErrEntryNotFound):
+		return "This entry is no longer in the database. It may have been deleted in KeePass."
 	}
 	return err.Error()
 }
@@ -236,25 +239,48 @@ func (a *application) addEntry() {
 		return
 	}
 	v := a.vault
+	a.entryDialog("Add password", vault.Entry{}, func(title, username, password string) error {
+		return v.Add(title, username, password)
+	})
+}
+
+// editEntry changes the selected entry.
+func (a *application) editEntry() {
+	if a.vault == nil || a.modal > 0 {
+		return
+	}
+	e := a.selected()
+	if e == nil {
+		return
+	}
+	v, entry := a.vault, *e
+	a.entryDialog("Edit password", entry, func(title, username, password string) error {
+		return v.Update(entry.ID, title, username, password)
+	})
+}
+
+// entryDialog asks for the name, username and password of an entry, starting
+// from initial, and passes them to save.
+func (a *application) entryDialog(caption string, initial vault.Entry, save func(title, username, password string) error) {
 	var (
 		f                    form
 		name, user, password *walk.LineEdit
 		reveal               *walk.PushButton
 	)
 	accepted := a.exec(Dialog{
-		Title:   "Add password",
+		Title:   caption,
 		MinSize: Size{Width: 380},
 		Layout:  VBox{},
 		Children: append([]Widget{
 			Label{Text: "Name"},
-			LineEdit{AssignTo: &name},
+			LineEdit{AssignTo: &name, Text: initial.Title},
 			Label{Text: "Username"},
-			LineEdit{AssignTo: &user},
+			LineEdit{AssignTo: &user, Text: initial.Username},
 			Label{Text: "Password"},
 			Composite{
 				Layout: HBox{MarginsZero: true},
 				Children: []Widget{
-					LineEdit{AssignTo: &password, PasswordMode: true},
+					LineEdit{AssignTo: &password, Text: initial.Password, PasswordMode: true},
 					// A button, because a themed check box ignores text colours
 					// and would stay black in dark mode.
 					PushButton{AssignTo: &reveal, Text: "Show", MaxSize: Size{Width: 60}, OnClicked: func() {
@@ -274,7 +300,7 @@ func (a *application) addEntry() {
 				f.status.SetText("Enter a name.")
 				return
 			}
-			f.run(func() error { return v.Add(title, username, secret) })
+			f.run(func() error { return save(title, username, secret) })
 		})...),
 	}, &f, func() walk.Widget { return name })
 	if accepted {

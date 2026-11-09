@@ -24,6 +24,7 @@ func main() {
 	if a.cfg, err = loadConfig(); err != nil {
 		fatal(fmt.Errorf("read configuration: %w", err))
 	}
+	setMenuMode(a.cfg.Theme)
 	if err := a.createWindow(); err != nil {
 		fatal(err)
 	}

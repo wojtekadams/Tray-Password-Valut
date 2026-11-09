@@ -242,6 +242,23 @@ func enableSingleClick(table win.HWND) {
 	}
 }
 
+// afterMessages calls onSize each time the window has been resized, and
+// onPaint each time it has painted itself.
+func afterMessages(hwnd win.HWND, onSize, onPaint func(win.HWND)) {
+	original := win.GetWindowLongPtr(hwnd, win.GWLP_WNDPROC)
+	proc := windows.NewCallback(func(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
+		result := win.CallWindowProc(original, hwnd, msg, wParam, lParam)
+		switch msg {
+		case win.WM_SIZE:
+			onSize(hwnd)
+		case win.WM_PAINT:
+			onPaint(hwnd)
+		}
+		return result
+	})
+	win.SetWindowLongPtr(hwnd, win.GWLP_WNDPROC, proc)
+}
+
 // cursorInRow returns the cursor's distance from the left edge of the list,
 // if it is over a row. walk's activation event only tells the row, not where
 // in it the click was.

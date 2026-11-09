@@ -3,6 +3,7 @@ package vault
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -212,6 +213,128 @@ func TestCreate(t *testing.T) {
 	}
 }
 
+func TestUpdateKeepsOtherDataAndHistory(t *testing.T) {
+	path := copyFixture(t, "kdbx4.kdbx")
+	v, err := Open(path, fixturePassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := find(v.Entries(), "Mail")
+	if old == nil {
+		t.Fatal("Mail entry missing")
+	}
+	if err := v.Update(old.ID, "Poczta", "ania", "nowe-hasło"); err != nil {
+		t.Fatal(err)
+	}
+	if e := find(v.Entries(), "Poczta"); e == nil || e.ID != old.ID || e.Username != "ania" || e.Password != "nowe-hasło" {
+		t.Fatalf("updated entry = %+v", e)
+	}
+
+	// A fresh open must see the change; nothing else may be lost.
+	v2, err := Open(path, fixturePassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e := find(v2.Entries(), "Poczta"); e == nil || e.ID != old.ID || e.Password != "nowe-hasło" {
+		t.Fatalf("reopened entry = %+v", e)
+	}
+	if len(v2.Entries()) != 2 || find(v2.Entries(), "Mail") != nil {
+		t.Fatalf("entries = %+v", v2.Entries())
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	db, err := decode(f, gokeepasslib.NewPasswordCredentials(fixturePassword))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mail *gokeepasslib.Entry
+	walkGroups(db.Content.Root.Groups, func(*gokeepasslib.Group) bool { return false },
+		func(e *gokeepasslib.Entry) {
+			if EntryID(e.UUID) == old.ID {
+				mail = e
+			}
+		})
+	if mail == nil {
+		t.Fatal("entry lost")
+	}
+	if got := mail.GetContent("Custom"); got != "custom-value" {
+		t.Errorf("custom field = %q", got)
+	}
+	if got := mail.GetContent("URL"); got != "https://mail.example" {
+		t.Errorf("url = %q", got)
+	}
+	if len(mail.Binaries) != 1 || mail.Binaries[0].Name != "file.txt" {
+		t.Errorf("attachment ref lost: %+v", mail.Binaries)
+	}
+	if p := mail.Get("Password"); p == nil || !p.Value.Protected.Bool {
+		t.Errorf("password not protected: %+v", p)
+	}
+	// The fixture's own history entry, then the version before the update.
+	if len(mail.Histories) != 1 || len(mail.Histories[0].Entries) != 2 {
+		t.Fatalf("history = %+v", mail.Histories)
+	}
+	previous := mail.Histories[0].Entries[1]
+	if previous.GetTitle() != "Mail" || previous.GetContent("UserName") != old.Username ||
+		previous.GetPassword() != old.Password || previous.UUID != mail.UUID {
+		t.Errorf("previous version = %q %q %q", previous.GetTitle(), previous.GetContent("UserName"), previous.GetPassword())
+	}
+	if got := countEntries(db); got != 3 { // Bank, Mail, Trashed
+		t.Errorf("total entries = %d", got)
+	}
+}
+
+func TestUpdateTrimsHistory(t *testing.T) {
+	path := copyFixture(t, "kdbx4.kdbx")
+	v, err := Open(path, fixturePassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := find(v.Entries(), "Bank").ID
+	for i := range 12 {
+		if err := v.Update(id, "Bank", "u", fmt.Sprint("p", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	db, err := decode(f, gokeepasslib.NewPasswordCredentials(fixturePassword))
+	if err != nil {
+		t.Fatal(err)
+	}
+	limit := db.Content.Meta.HistoryMaxItems
+	walkGroups(db.Content.Root.Groups, func(*gokeepasslib.Group) bool { return false },
+		func(e *gokeepasslib.Entry) {
+			if EntryID(e.UUID) != id {
+				return
+			}
+			if n := int64(len(e.Histories[0].Entries)); limit >= 0 && n != limit {
+				t.Errorf("history has %d versions, limit %d", n, limit)
+			}
+			if got := e.Histories[0].Entries[len(e.Histories[0].Entries)-1].GetPassword(); got != "p10" {
+				t.Errorf("latest history password = %q, want p10", got)
+			}
+		})
+}
+
+func TestUpdateErrors(t *testing.T) {
+	v, err := Open(copyFixture(t, "kdbx4.kdbx"), fixturePassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Update(EntryID{1, 2, 3}, "x", "u", "p"); !errors.Is(err, ErrEntryNotFound) {
+		t.Errorf("unknown entry: err = %v, want ErrEntryNotFound", err)
+	}
+	if err := v.Update(find(v.Entries(), "Bank").ID, "", "u", "p"); err == nil {
+		t.Error("empty title: expected error")
+	}
+}
+
 func TestAddRequiresTitle(t *testing.T) {
 	v, err := Open(copyFixture(t, "kdbx4.kdbx"), fixturePassword)
 	if err != nil {
@@ -245,6 +368,20 @@ func TestKeePassXCReadsOurFile(t *testing.T) {
 	if !strings.Contains(string(out), "jan") || !strings.Contains(string(out), "pass") {
 		t.Fatalf("unexpected output:\n%s", out)
 	}
+
+	// An edited entry, with its history, must read back too.
+	if err := v.Update(find(v.Entries(), "Nowy").ID, "Zmieniony", "ola", "nowe"); err != nil {
+		t.Fatal(err)
+	}
+	cmd = exec.Command(cli, "show", "-q", "-s", path, "Zmieniony")
+	cmd.Stdin = strings.NewReader(fixturePassword + "\n")
+	out, err = cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("keepassxc-cli after update: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "ola") || !strings.Contains(string(out), "nowe") {
+		t.Fatalf("unexpected output after update:\n%s", out)
+	}
 }
 
 // Fixtures copied from gokeepasslib's test suite (written by KeePass/KeePassXC).
@@ -273,8 +410,24 @@ func TestFormats(t *testing.T) {
 			if got := len(v2.Entries()); got != before+1 {
 				t.Fatalf("entries = %d, want %d", got, before+1)
 			}
-			if e := find(v2.Entries(), "Nowy"); e == nil || e.Password != "pass" {
+			e := find(v2.Entries(), "Nowy")
+			if e == nil || e.Password != "pass" {
 				t.Fatalf("new entry = %+v", e)
+			}
+			// Editing an existing entry of every format, too.
+			first := v2.Entries()[0]
+			if err := v2.Update(first.ID, first.Title+" 2", "ola", "nowe"); err != nil {
+				t.Fatal(err)
+			}
+			v3, err := Open(path, password)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := find(v3.Entries(), first.Title+" 2"); got == nil || got.ID != first.ID || got.Password != "nowe" {
+				t.Fatalf("edited entry = %+v", got)
+			}
+			if got := len(v3.Entries()); got != before+1 {
+				t.Fatalf("entries after edit = %d, want %d", got, before+1)
 			}
 			if dir := os.Getenv("VAULT_KEEP_DIR"); dir != "" {
 				data, _ := os.ReadFile(path)
@@ -294,8 +447,21 @@ func TestMask(t *testing.T) {
 		"ąćęł":             "ąćę•••••",
 	}
 	for in, want := range cases {
-		if got := Mask(in); got != want {
-			t.Errorf("Mask(%q) = %q, want %q", in, got, want)
+		for _, mode := range []MaskMode{MaskPart, "", "unknown"} {
+			if got := Mask(in, mode); got != want {
+				t.Errorf("Mask(%q, %q) = %q, want %q", in, mode, got, want)
+			}
+		}
+	}
+	full := map[string]string{
+		"":                 "",
+		"a":                "••••••••",
+		"a-very-long-pass": "••••••••",
+		"ąćęł":             "••••••••",
+	}
+	for in, want := range full {
+		if got := Mask(in, MaskFull); got != want {
+			t.Errorf("Mask(%q, MaskFull) = %q, want %q", in, got, want)
 		}
 	}
 }

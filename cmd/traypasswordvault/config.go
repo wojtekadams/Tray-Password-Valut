@@ -7,6 +7,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+
+	"github.com/wojtekadams/Tray-Password-Valut/internal/theme"
+	"github.com/wojtekadams/Tray-Password-Valut/internal/vault"
 )
 
 // config is stored in %APPDATA%\TrayPasswordVault\config.json.
@@ -14,6 +17,10 @@ type config struct {
 	DatabasePath string `json:"databasePath"`
 	// Hotkey overrides the default shortcuts, e.g. "Ctrl+Shift+Space".
 	Hotkey string `json:"hotkey,omitempty"`
+	// Theme is "light", "dark" or empty to follow Windows.
+	Theme theme.Mode `json:"theme,omitempty"`
+	// Mask is "full" or "part"; empty means "part".
+	Mask vault.MaskMode `json:"mask,omitempty"`
 }
 
 func configPath() (string, error) {

@@ -36,10 +36,14 @@ var ErrWrongPassword = errors.New("wrong password")
 
 // Entry is the part of a KeePass entry this application works with.
 type Entry struct {
+	ID       EntryID
 	Title    string
 	Username string
 	Password string
 }
+
+// EntryID identifies an entry: it is the UUID KeePass gives it.
+type EntryID [16]byte
 
 // Vault is an unlocked database. Every change is made against the current file
 // on disk, so edits made meanwhile in KeePass are never overwritten.
@@ -140,6 +144,69 @@ func (v *Vault) Add(title, username, password string) error {
 	root.Entries = append(root.Entries, e)
 
 	return v.write(db, countEntries(db))
+}
+
+// ErrEntryNotFound is returned when an entry to change is no longer in the
+// database, for example because it was deleted in KeePass meanwhile.
+var ErrEntryNotFound = errors.New("the entry is no longer in the database")
+
+// Update changes the title, username and password of an entry. As KeePass
+// does, the previous version is kept in the entry's history, which is trimmed
+// to the database's limit.
+func (v *Vault) Update(id EntryID, title, username, password string) error {
+	if title == "" {
+		return errors.New("title is required")
+	}
+
+	db, _, err := v.read()
+	if err != nil {
+		return err
+	}
+	var entry *gokeepasslib.Entry
+	walkGroups(db.Content.Root.Groups, func(*gokeepasslib.Group) bool { return false },
+		func(e *gokeepasslib.Entry) {
+			if entry == nil && EntryID(e.UUID) == id {
+				entry = e
+			}
+		})
+	if entry == nil {
+		return ErrEntryNotFound
+	}
+
+	previous := entry.Clone()
+	previous.UUID = entry.UUID // history versions keep the entry's UUID
+	previous.Histories = nil
+	if len(entry.Histories) == 0 {
+		entry.Histories = []gokeepasslib.History{{}}
+	}
+	history := &entry.Histories[0]
+	history.Entries = append(history.Entries, previous)
+	if limit := db.Content.Meta.HistoryMaxItems; limit >= 0 && int64(len(history.Entries)) > limit {
+		history.Entries = history.Entries[int64(len(history.Entries))-limit:]
+	}
+
+	setValue(entry, "Title", title, false)
+	setValue(entry, "UserName", username, false)
+	setValue(entry, "Password", password, true)
+	entry.Times.LastModificationTime = gokeepasslib.NewTimeData().LastModificationTime
+
+	return v.write(db, countEntries(db))
+}
+
+// setValue sets one of an entry's fields, adding it if missing.
+func setValue(e *gokeepasslib.Entry, key, value string, protected bool) {
+	if field := e.Get(key); field != nil {
+		field.Value.Content = value
+		if protected {
+			field.Value.Protected = wrappers.NewBoolWrapper(true)
+		}
+		return
+	}
+	data := gokeepasslib.ValueData{Key: key, Value: gokeepasslib.V{Content: value}}
+	if protected {
+		data.Value.Protected = wrappers.NewBoolWrapper(true)
+	}
+	e.Values = append(e.Values, data)
 }
 
 // read decodes the file and leaves protected values unlocked.
@@ -294,6 +361,7 @@ func (v *Vault) setState(db *gokeepasslib.Database, modTime time.Time) {
 	}
 	walkGroups(db.Content.Root.Groups, skip, func(e *gokeepasslib.Entry) {
 		entries = append(entries, Entry{
+			ID:       EntryID(e.UUID),
 			Title:    e.GetTitle(),
 			Username: e.GetContent("UserName"),
 			Password: e.GetPassword(),
@@ -329,13 +397,25 @@ func walkGroups(groups []gokeepasslib.Group, skip func(*gokeepasslib.Group) bool
 	}
 }
 
-// Mask hides a password for display, keeping its first three characters. The
-// mask has a fixed length so it does not reveal how long the password is, and
-// a password of three characters or fewer shows none of them.
-func Mask(password string) string {
+// MaskMode chooses how much of a password Mask shows.
+type MaskMode string
+
+const (
+	MaskPart MaskMode = "part" // the first three characters
+	MaskFull MaskMode = "full" // nothing
+)
+
+// Mask hides a password for display. MaskPart, also used for unknown modes,
+// keeps its first three characters; a password of three characters or fewer
+// shows none of them. The mask has a fixed length so it does not reveal how
+// long the password is.
+func Mask(password string, mode MaskMode) string {
 	const dots = "•••••"
 	if password == "" {
 		return ""
+	}
+	if mode == MaskFull {
+		return "•••" + dots // as wide as a partial mask
 	}
 	runes := []rune(password)
 	if len(runes) <= 3 {

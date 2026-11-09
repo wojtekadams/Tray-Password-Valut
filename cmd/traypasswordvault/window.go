@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unsafe"
 
 	"github.com/tailscale/walk"
 	. "github.com/tailscale/walk/declarative"
@@ -85,6 +86,7 @@ type application struct {
 type entryModel struct {
 	walk.TableModelBase
 	rows []vault.Entry
+	mask *vault.MaskMode // the configured mask
 }
 
 func (m *entryModel) RowCount() int { return len(m.rows) }
@@ -96,12 +98,12 @@ func (m *entryModel) Value(row, col int) any {
 	case 1:
 		return m.rows[row].Username
 	default:
-		return vault.Mask(m.rows[row].Password)
+		return vault.Mask(m.rows[row].Password, *m.mask)
 	}
 }
 
 func (a *application) createWindow() error {
-	a.model = &entryModel{}
+	a.model = &entryModel{mask: &a.cfg.Mask}
 	err := MainWindow{
 		AssignTo: &a.mw,
 		Visible:  false,
@@ -181,7 +183,11 @@ func (a *application) createWindow() error {
 	a.lists = listViews(a.table.Handle())
 	enableSingleClick(a.table.Handle())
 	a.table.SetScrollbarOrientation(walk.Vertical)
-	a.table.SizeChanged().Attach(a.fitColumn)
+	for _, list := range a.lists {
+		// The list resizes itself when its scroll bar comes or goes.
+		afterMessages(list, fitColumn, a.hideColumnSeparator)
+		fitColumn(list)
+	}
 	removeBorder(a.search.Handle())
 	a.search.FocusedChanged().Attach(a.paintSearchLine)
 	a.searchFrame.SizeChanged().Attach(func() {
@@ -199,7 +205,7 @@ func (a *application) createWindow() error {
 		removeBorder(list)
 	}
 	a.updateRowHeight()
-	a.applyPalette(systemPalette())
+	a.applyPalette(paletteFor(a.cfg.Theme))
 
 	if icon := appIcon(); icon != nil {
 		a.mw.SetIcon(icon)
@@ -243,24 +249,34 @@ func (a *application) createTray() error {
 		}
 	})
 
-	menu := a.tray.ContextMenu().Actions()
-	item := func(text string, handler func()) *walk.Action {
+	item := func(menu *walk.ActionList, text string, handler func()) *walk.Action {
 		action := walk.NewAction()
 		action.SetText(text)
 		action.Triggered().Attach(handler)
 		menu.Add(action)
 		return action
 	}
-	item("Open", a.show)
-	a.lockAction = item("Lock", a.lock)
-	a.lockAction.SetEnabled(false)
-	item("Change database…", func() {
-		if a.modal == 0 && a.chooseDatabase() {
-			a.show()
+	submenu := func(menu *walk.ActionList, text string) (*walk.ActionList, error) {
+		sub, err := walk.NewMenu()
+		if err != nil {
+			return nil, err
 		}
-	})
-	item("Set shortcut…", a.changeHotkey)
-	a.autostart = item("Start with Windows", func() {
+		action := walk.NewMenuAction(sub)
+		action.SetText(text)
+		menu.Add(action)
+		return sub.Actions(), nil
+	}
+
+	menu := a.tray.ContextMenu().Actions()
+	item(menu, "Open", a.show)
+	a.lockAction = item(menu, "Lock", a.lock)
+	a.lockAction.SetEnabled(false)
+
+	options, err := submenu(menu, "Options")
+	if err != nil {
+		return err
+	}
+	a.autostart = item(options, "Start with Windows", func() {
 		if err := setAutostart(!autostartEnabled()); err != nil {
 			a.errorBox(err)
 		}
@@ -268,10 +284,95 @@ func (a *application) createTray() error {
 	})
 	a.autostart.SetCheckable(true)
 	a.autostart.SetChecked(autostartEnabled())
+	item(options, "Change database…", func() {
+		if a.modal == 0 && a.chooseDatabase() {
+			a.show()
+		}
+	})
+	item(options, "Set shortcut…", a.changeHotkey)
+
+	// choices adds a submenu of exclusive options, ticking the current one.
+	choices := func(menu *walk.ActionList, text string, options []choice,
+		current func() string, choose func(string)) error {
+		sub, err := submenu(menu, text)
+		if err != nil {
+			return err
+		}
+		actions := make([]*walk.Action, len(options))
+		tick := func() {
+			for i, o := range options {
+				actions[i].SetChecked(o.value == current())
+			}
+		}
+		for i, o := range options {
+			actions[i] = item(sub, o.text, func() {
+				choose(o.value)
+				tick()
+			})
+			actions[i].SetCheckable(true)
+		}
+		tick()
+		return nil
+	}
+
+	err = choices(options, "Theme", []choice{
+		{"Dark", string(theme.Dark)},
+		{"Light", string(theme.Light)},
+		{"Auto (as Windows)", string(theme.Auto)},
+	}, func() string {
+		if m := a.cfg.Theme; m == theme.Light || m == theme.Dark {
+			return string(m)
+		}
+		return string(theme.Auto)
+	}, func(value string) { a.setTheme(theme.Mode(value)) })
+	if err != nil {
+		return err
+	}
+
+	err = choices(options, "Mask password", []choice{
+		{"Full", string(vault.MaskFull)},
+		{"Part", string(vault.MaskPart)},
+	}, func() string {
+		if a.cfg.Mask == vault.MaskFull {
+			return string(vault.MaskFull)
+		}
+		return string(vault.MaskPart)
+	}, func(value string) { a.setMask(vault.MaskMode(value)) })
+	if err != nil {
+		return err
+	}
+
+	item(menu, "About", a.about)
 	menu.Add(walk.NewSeparatorAction())
-	item("Exit", a.exit)
+	item(menu, "Exit", a.exit)
 
 	return a.tray.SetVisible(true)
+}
+
+// choice is an item of a menu of exclusive options.
+type choice struct{ text, value string }
+
+// setTheme applies and remembers the chosen theme.
+func (a *application) setTheme(m theme.Mode) {
+	a.cfg.Theme = m
+	a.saveConfig()
+	setMenuMode(m)
+	a.updateTheme()
+}
+
+// setMask applies and remembers how passwords are masked in the list.
+func (a *application) setMask(m vault.MaskMode) {
+	a.cfg.Mask = m
+	a.saveConfig()
+	for _, list := range a.lists {
+		win.InvalidateRect(list, nil, false) // no erasing, no flicker
+	}
+}
+
+func (a *application) saveConfig() {
+	if err := saveConfig(a.cfg); err != nil {
+		a.errorBox(err)
+	}
 }
 
 func (a *application) startHotkey() {
@@ -353,18 +454,45 @@ func (a *application) updateRowHeight() {
 	a.rowImages, a.rowPixels = images, height
 }
 
-// fitColumn makes the list's only column fill the list. The Windows 11 theme
-// draws a separator in the last two pixels of a column, so the column reaches
-// that far past the list's edge, out of sight. There is no horizontal scroll
-// bar to reveal it.
-func (a *application) fitColumn() {
-	for _, list := range a.lists {
-		// walk's list for frozen columns has no width and stays alone.
-		var rc win.RECT
-		if win.GetClientRect(list, &rc) && rc.Right > 0 {
-			win.SendMessage(list, win.LVM_SETCOLUMNWIDTH, 0, uintptr(rc.Right+columnSeparator))
+// fitColumn makes a list's only column exactly as wide as the list. A wider
+// one would make the list reserve room for a horizontal scroll bar, which
+// shows as a grey square below the vertical one.
+func fitColumn(list win.HWND) {
+	// walk's list for frozen columns has no width and stays alone.
+	var rc win.RECT
+	if win.GetClientRect(list, &rc) && rc.Right > 0 &&
+		win.SendMessage(list, win.LVM_GETCOLUMNWIDTH, 0, 0) != uintptr(rc.Right) {
+		win.SendMessage(list, win.LVM_SETCOLUMNWIDTH, 0, uintptr(rc.Right))
+	}
+}
+
+// hideColumnSeparator paints over the line the Windows 11 list theme draws in
+// the last pixels of a column. styleCell covers it on the rows; this covers
+// it below them, and runs each time the list has painted itself.
+func (a *application) hideColumnSeparator(list win.HWND) {
+	var client win.RECT
+	if !win.GetClientRect(list, &client) || client.Right <= 0 {
+		return
+	}
+	top := int32(0)
+	if n := len(a.model.rows); n > 0 {
+		last := win.RECT{Left: win.LVIR_BOUNDS}
+		if win.SendMessage(list, win.LVM_GETITEMRECT, uintptr(n-1), uintptr(unsafe.Pointer(&last))) != 0 {
+			top = max(last.Bottom, 0)
 		}
 	}
+	if top >= client.Bottom {
+		return
+	}
+	hdc := win.GetDC(list)
+	defer win.ReleaseDC(list, hdc)
+	brush := win.CreateBrushIndirect(&win.LOGBRUSH{
+		LbStyle: win.BS_SOLID, LbColor: win.COLORREF(walkColor(a.palette.Background)),
+	})
+	defer win.DeleteObject(win.HGDIOBJ(brush))
+	win.FillRect(hdc, &win.RECT{
+		Left: client.Right - columnSeparator, Top: top, Right: client.Right, Bottom: client.Bottom,
+	}, brush)
 }
 
 // listWidth returns the width of the visible part of the list, in pixels.
@@ -461,9 +589,9 @@ func (a *application) refresh() {
 	})
 	a.model.rows = rows
 	a.model.PublishRowsReset()
-	a.fitColumn() // the scroll bar may have come or gone
 	if len(rows) > 0 {
-		a.table.SetCurrentIndex(max(slices.Index(rows, previous), 0))
+		// By ID: an edited entry stays selected.
+		a.table.SetCurrentIndex(max(slices.IndexFunc(rows, func(e vault.Entry) bool { return e.ID == previous.ID }), 0))
 	}
 }
 
@@ -588,6 +716,8 @@ func (a *application) OnPreTranslate(msg *win.MSG) bool {
 		}
 	case key == walk.KeyU && walk.ControlDown():
 		a.copyUsername()
+	case key == walk.KeyE && walk.ControlDown():
+		a.editEntry()
 	case key == walk.KeyN && walk.ControlDown():
 		a.addEntry()
 	default:

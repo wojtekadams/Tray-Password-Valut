@@ -23,6 +23,8 @@ const (
 	dwmBorderColor          = 34
 	firstDarkModeBuild      = 18362 // Windows 10 1903, where the ordinals below exist
 	appModeAllowDark        = 1
+	appModeForceDark        = 2
+	appModeForceLight       = 3
 
 	// Undocumented uxtheme.dll exports, also used by File Explorer. If they
 	// are missing, the application simply stays light.
@@ -38,7 +40,8 @@ var (
 	gdi32                  = windows.NewLazySystemDLL("gdi32.dll")
 	procCreateRoundRectRgn = gdi32.NewProc("CreateRoundRectRgn")
 
-	allowDarkModeForWindow uintptr // 0 if dark mode is unavailable
+	allowDarkModeForWindow uintptr            // 0 if dark mode is unavailable
+	setPreferredAppMode    func(mode uintptr) // nil if dark mode is unavailable
 )
 
 // initDarkMode lets menus and controls follow the system's dark mode. It must
@@ -62,10 +65,28 @@ func initDarkMode() {
 		}
 		procs[ordinal] = proc
 	}
-	syscall.SyscallN(procs[ordinalPreferredAppMode], appModeAllowDark)
-	syscall.SyscallN(procs[ordinalRefreshPolicy])
-	syscall.SyscallN(procs[ordinalFlushMenuThemes])
+	setPreferredAppMode = func(mode uintptr) {
+		syscall.SyscallN(procs[ordinalPreferredAppMode], mode)
+		syscall.SyscallN(procs[ordinalRefreshPolicy])
+		syscall.SyscallN(procs[ordinalFlushMenuThemes])
+	}
+	setPreferredAppMode(appModeAllowDark)
 	allowDarkModeForWindow = procs[ordinalAllowDarkWindow]
+}
+
+// setMenuMode makes menus, such as the tray menu, follow the chosen mode.
+func setMenuMode(m theme.Mode) {
+	if setPreferredAppMode == nil {
+		return
+	}
+	switch m {
+	case theme.Dark:
+		setPreferredAppMode(appModeForceDark)
+	case theme.Light:
+		setPreferredAppMode(appModeForceLight)
+	default:
+		setPreferredAppMode(appModeAllowDark)
+	}
 }
 
 func registryDWORD(path, name string) (uint32, bool) {
@@ -78,10 +99,11 @@ func registryDWORD(path, name string) (uint32, bool) {
 	return uint32(value), err == nil
 }
 
-// systemPalette returns the palette for the Windows light or dark app mode.
-func systemPalette() theme.Palette {
+// paletteFor returns the palette for the chosen mode. Auto follows the
+// Windows light or dark app mode.
+func paletteFor(m theme.Mode) theme.Palette {
 	light, ok := registryDWORD(personalizeKeyPath, "AppsUseLightTheme")
-	return theme.New(allowDarkModeForWindow != 0 && ok && light == 0)
+	return theme.New(m.IsDark(allowDarkModeForWindow != 0 && ok && light == 0))
 }
 
 func walkColor(c theme.Color) walk.Color { return walk.RGB(c.R, c.G, c.B) }
@@ -95,10 +117,10 @@ func uiFont() Font {
 	return Font{Family: family, PointSize: 10}
 }
 
-// updateTheme follows changes of the Windows settings. It is cheap, so it runs
-// each time the popup opens.
+// updateTheme follows the chosen theme and changes of the Windows settings. It
+// is cheap, so it runs each time the popup opens.
 func (a *application) updateTheme() {
-	if p := systemPalette(); p != a.palette {
+	if p := paletteFor(a.cfg.Theme); p != a.palette {
 		a.applyPalette(p)
 	}
 }
@@ -147,6 +169,10 @@ func (a *application) applyPalette(p theme.Palette) {
 	a.palette, a.brushes = p, b
 
 	a.mw.SetBackground(b.background)
+	// The table erases its area itself while the list is rebuilt, as when a
+	// search changes how many entries match: without this, in its default
+	// light grey.
+	a.table.SetBackground(b.background)
 	setDarkTitle(a.mw.Handle(), p.Dark)
 	setBorderColor(a.mw.Handle(), p.Border)
 	a.themeChildren(a.mw)
@@ -207,7 +233,10 @@ func (a *application) themeChildren(container walk.Container) {
 			w.SetTextColor(walkColor(p.Text))
 			setControlTheme(w.Handle(), p.Dark, "DarkMode_CFD")
 		case *walk.PushButton:
+			// The theme still tracks the hovered state, which the button
+			// is then painted in by styleButton.
 			setControlTheme(w.Handle(), p.Dark, "DarkMode_Explorer")
+			a.styleButton(w.Handle())
 		case *walk.Composite:
 			a.themeChildren(w)
 		}

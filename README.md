@@ -10,7 +10,7 @@ Website: https://wojtekadams.github.io/Tray-Password-Valut/
 ## Usage
 
 On first run, pick or create a database. The app starts with Windows and asks for the
-password once. The shortcut (`Win+W` by default, changeable in the tray menu) opens
+password once. The shortcut (`Win+W` by default, changeable in the tray menu's Options) opens
 the popup.
 
 | Input | Action |
@@ -19,7 +19,11 @@ the popup.
 | Click password, Enter | Copy password (cleared from clipboard after 30 s) |
 | Click login, Ctrl+U | Copy login |
 | Ctrl+N, **+** | Add entry |
+| Ctrl+E | Edit the selected entry |
 | Esc | Hide |
+
+The tray menu's **Options** hold the database, the shortcut, starting with Windows,
+the theme (dark, light or as Windows) and how passwords are masked in the list.
 
 ## Notes
 
